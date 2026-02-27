@@ -2,15 +2,19 @@
   "name": "sun-reader",
   "version": "1.0.0",
   "description": "Sun Reader - 桌面端电子书阅读器",
-  "main": "main.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "pack": "electron-builder --dir",
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "electron . --dev",
+    "build": "tsc && vite build",
+    "build:electron": "electron-builder",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
@@ -23,75 +27,76 @@
   "author": "Sun Reader Team",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^20.11.5",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.4.33",
+    "prettier": "^3.2.4",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11"
   },
   "dependencies": {
-    "fs-extra": "^11.2.0"
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-dropdown-menu": "^2.0.6",
+    "@radix-ui/react-label": "^2.0.2",
+    "@radix-ui/react-scroll-area": "^1.0.5",
+    "@radix-ui/react-separator": "^1.0.3",
+    "@radix-ui/react-slider": "^1.1.2",
+    "@radix-ui/react-slot": "^1.0.2",
+    "@radix-ui/react-tabs": "^1.0.4",
+    "@radix-ui/react-toast": "^1.1.5",
+    "@radix-ui/react-tooltip": "^1.0.7",
+    "@tanstack/react-query": "^5.17.19",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.3.1",
+    "electron-is-dev": "^3.0.1",
+    "fs-extra": "^11.2.0",
+    "immer": "^10.0.3",
+    "lucide-react": "^0.314.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.3",
+    "tailwind-merge": "^2.2.1",
+    "zod": "^3.22.4",
+    "zustand": "^4.5.0"
   },
   "build": {
     "appId": "com.sunreader.app",
     "productName": "Sun Reader",
     "directories": {
-      "output": "dist"
+      "output": "dist-electron"
     },
     "files": [
-      "main.js",
-      "preload.js",
-      "index.html",
-      "read.html",
-      "immersive.html",
-      "dual-page.html",
-      "styles.css",
-      "app.js",
+      "electron/**/*",
+      "dist/**/*",
       "package.json"
     ],
     "extraResources": [
       "books/**/*"
     ],
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64", "ia32"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
-        }
-      ],
+      "target": ["nsis", "portable"],
       "icon": "assets/icon.ico"
     },
     "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        }
-      ],
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.books"
+      "target": ["dmg"],
+      "icon": "assets/icon.icns"
     },
     "linux": {
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": ["x64"]
-        },
-        {
-          "target": "deb",
-          "arch": ["x64"]
-        }
-      ],
-      "icon": "assets/icon.png",
-      "category": "Office"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Sun Reader"
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icon.png"
     }
   }
 }
