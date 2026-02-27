@@ -3,7 +3,8 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(mkdir:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(pnpm install:*)"
     ]
   }
 }
