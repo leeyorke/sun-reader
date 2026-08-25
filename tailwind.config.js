@@ -1,11 +1,12 @@
 /** @type {import('tailwindcss').Config} */
+const path = require('path');
+
 module.exports = {
   darkMode: ["class"],
+  // 用绝对路径锚定，避免受 Vite root / 工作目录影响
   content: [
-    './pages/**/*.{ts,tsx}',
-    './components/**/*.{ts,tsx}',
-    './app/**/*.{ts,tsx}',
-    './src/**/*.{ts,tsx}',
+    path.join(__dirname, 'src/renderer/index.html'),
+    path.join(__dirname, 'src/renderer/src/**/*.{ts,tsx}'),
   ],
   theme: {
     container: {

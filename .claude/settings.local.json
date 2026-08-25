@@ -4,7 +4,54 @@
       "Bash(dir:*)",
       "Bash(mkdir:*)",
       "Bash(git:*)",
-      "Bash(pnpm install:*)"
+      "Bash(pnpm install:*)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm:*)",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)"
     ]
+  },
+  "model": "dashscope,glm-4.6",
+  "avaiableModels": [
+    "glm-4.6",
+    "qwen3-coder-flash"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/session-start-check.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [],
+    "PreToolUse": [],
+    "PermissionRequest": [],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/post-write-hello.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [],
+    "Notification": [],
+    "SubagentStart": [],
+    "SubagentStop": [],
+    "Stop": [],
+    "TeammateIdle": [],
+    "TaskCompleted": [],
+    "ConfigChange": [],
+    "WorktreeCreate": []
   }
 }

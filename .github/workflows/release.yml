@@ -1,0 +1,113 @@
+name: Release
+
+# 版本号更新时自动打包发布：
+# package.json 的 version 与最近的 v* 标签不一致时，
+# 构建 Windows + macOS 安装包，并创建对应的 GitHub Release。
+# 手动触发（workflow_dispatch）可用于重跑。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- 版本检查：决定是否需要打包 ----------
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      should-build: ${{ steps.ver.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史以读取最近的标签
+
+      - name: 比对当前版本与最近标签
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          LAST_TAG=$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || echo "")
+          LAST_VERSION="${LAST_TAG#v}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "当前版本: $VERSION，最近标签: ${LAST_TAG:-（无）}"
+
+          if [ -z "$LAST_TAG" ] || [ "$VERSION" != "$LAST_VERSION" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------- 双平台打包 ----------
+  build:
+    name: Build (${{ matrix.os }})
+    needs: version-check
+    if: needs.version-check.outputs.should-build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+    runs-on: ${{ matrix.os }}
+    env:
+      # 未配置代码签名证书时跳过 macOS 签名，避免构建失败
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install
+
+      - name: 构建渲染层
+        run: pnpm run build
+
+      - name: 打包应用（${{ matrix.platform }}）
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: |
+            dist-electron/*.exe
+            dist-electron/*.dmg
+          if-no-files-found: error
+
+  # ---------- 创建 Release 并挂载安装包 ----------
+  publish-release:
+    name: Publish v${{ needs.version-check.outputs.version }}
+    needs: [version-check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts
+
+      - name: 列出产物
+        run: ls -lh artifacts/
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version-check.outputs.version }}
+          name: v${{ needs.version-check.outputs.version }}
+          generate_release_notes: true # 自动汇总自上个版本以来的提交
+          files: artifacts/*
