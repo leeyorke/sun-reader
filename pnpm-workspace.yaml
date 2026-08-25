@@ -1,3 +1,7 @@
+# electron-builder 无法正确处理 pnpm 默认的符号链接结构（打包后子依赖断链，
+# 如 fs-extra 找不到 universalify）。改用 npm 式扁平布局，两者完全兼容。
+nodeLinker: hoisted
+
 allowBuilds:
   electron: true
   esbuild: true
