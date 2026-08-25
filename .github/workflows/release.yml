@@ -68,7 +68,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22 # pnpm 11 需要 Node >= 22.13（依赖 node:sqlite 内置模块）
           cache: pnpm
 
       - name: 安装依赖
