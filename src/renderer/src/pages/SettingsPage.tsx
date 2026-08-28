@@ -26,6 +26,10 @@ import {
   saveReaderPrefs,
   type ReaderPrefs,
 } from '@/lib/prefs';
+import {
+  LETTER_SPACING_OPTIONS,
+  LINE_SPACING_OPTIONS,
+} from '@/lib/constants';
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -139,6 +143,41 @@ export function SettingsPage() {
               >
                 预览：永和九年，岁在癸丑。Sun Reader 0123456789
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>行间距</Label>
+              <Select
+                value={String(prefs.lineHeight)}
+                onValueChange={(v) => updatePrefs({ lineHeight: Number(v) })}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="选择行间距" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LINE_SPACING_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>字间距</Label>
+              <Select
+                value={String(prefs.letterSpacing)}
+                onValueChange={(v) => updatePrefs({ letterSpacing: Number(v) })}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="选择字间距" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LETTER_SPACING_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">正 = 加宽，0 = 浏览器默认，负值微缩</p>
             </div>
           </CardContent>
         </Card>

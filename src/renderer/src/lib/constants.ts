@@ -63,11 +63,20 @@ export const READER_MONO_FAMILY =
 // 行高和边距
 // ========================================
 
-export const LINE_HEIGHT_OPTIONS = [
+export const LINE_SPACING_OPTIONS = [
   { value: 1.5, label: '紧凑' },
   { value: 1.75, label: '舒适' },
   { value: 2.0, label: '宽松' },
-];
+  { value: 2.25, label: '更宽松' },
+] as const;
+
+/** 字间距（em）。正 = 加宽，0 = 浏览器默认，负值微缩 */
+export const LETTER_SPACING_OPTIONS = [
+  { value: -0.02, label: '微缩' },
+  { value: 0, label: '默认' },
+  { value: 0.05, label: '适中' },
+  { value: 0.12, label: '宽松' },
+] as const;
 
 export const PAGE_MARGIN_OPTIONS = [
   { value: 16, label: '窄' },

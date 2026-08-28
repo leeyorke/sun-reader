@@ -99,7 +99,7 @@ function readerTypographyCss(prefs: ReaderPrefs): string {
   return [
     `#book-flow, #book-flow * { font-family: ${user} !important; }`,
     `#book-flow pre, #book-flow code, #book-flow samp, #book-flow kbd, #book-flow var { font-family: ${READER_MONO} !important; }`,
-    `#book-flow { font-size: ${prefs.fontSize}px !important; line-height: ${prefs.lineHeight} !important; }`,
+    `#book-flow { font-size: ${prefs.fontSize}px !important; line-height: ${prefs.lineHeight} !important; letter-spacing: ${prefs.letterSpacing}em !important; }`,
   ].join('\n');
 }
 
@@ -844,6 +844,7 @@ export function ReaderPage() {
   const articleStyle: React.CSSProperties = {
     fontSize: `${prefs.fontSize}px`,
     lineHeight: prefs.lineHeight,
+    letterSpacing: `${prefs.letterSpacing}em`,
     fontFamily: resolveFontFamily(prefs.fontFamily),
   };
 
@@ -1033,8 +1034,8 @@ export function ReaderPage() {
         articleStyle={articleStyle}
         layoutDeps={
           epub
-            ? [epub, coverUrl, prefs.fontSize, prefs.lineHeight, prefs.fontFamily]
-            : [blocks, prefs.fontSize, prefs.lineHeight]
+            ? [epub, coverUrl, prefs.fontSize, prefs.lineHeight, prefs.letterSpacing, prefs.fontFamily]
+            : [blocks, prefs.fontSize, prefs.lineHeight, prefs.letterSpacing]
         }
         initialPercent={book.readingProgress || 0}
         initialAnchor={book.readingAnchor ?? null}

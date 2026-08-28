@@ -12,6 +12,7 @@ const PREFS_KEY = 'sun-reader-settings';
 export interface ReaderPrefs {
   fontSize: number;
   lineHeight: number;
+  letterSpacing: number;
   /** FONT_FAMILIES 的 value 键（'serif' | 'sans' | 'mono'） */
   fontFamily: string;
 }
@@ -19,6 +20,7 @@ export interface ReaderPrefs {
 export const DEFAULT_READER_PREFS: ReaderPrefs = {
   fontSize: 21,
   lineHeight: 1.9,
+  letterSpacing: 0,
   fontFamily: 'serif',
 };
 
@@ -34,6 +36,7 @@ export function loadReaderPrefs(): ReaderPrefs {
       return {
         fontSize: clampFontSize(Number(p.fontSize) || DEFAULT_READER_PREFS.fontSize),
         lineHeight: Number(p.lineHeight) || DEFAULT_READER_PREFS.lineHeight,
+        letterSpacing: Number(p.letterSpacing) || DEFAULT_READER_PREFS.letterSpacing,
         // fontFamily 既可以是 FONT_FAMILIES 的键（衬线/无衬线/等宽），
         // 也可以是系统字体的 family 名（FontPicker 选择）；读取时归一化
         // （剥离旧版本存档拼进的 " Regular" 样式词，CSS 只认家族名）
