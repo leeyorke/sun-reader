@@ -69,6 +69,24 @@ export function segmentParagraph(text: string, ranges: UnderlineRange[]): TextSe
 }
 
 /**
+ * 把区间两端的空白挤掉，使 start 落在真实可见字符上。
+ * 浏览器常把选区起点放在块级元素之间的空白文本节点（"\n" + 缩进）上，
+ * 那种节点不生成布局盒 —— 存成划线区间后按偏移反查位置会拿到全 0 的矩形，
+ * 跳转就会退化到第一页。返回 null 表示区间内全是空白。
+ */
+export function trimRangeWhitespace(
+  text: string,
+  start: number,
+  end: number
+): { start: number; end: number } | null {
+  let s = Math.max(0, start);
+  let e = Math.min(text.length, end);
+  while (s < e && /\s/.test(text[s])) s++;
+  while (e > s && /\s/.test(text[e - 1])) e--;
+  return e > s ? { start: s, end: e } : null;
+}
+
+/**
  * 从当前选区解析划线区间（通用版）。
  * anchorAttr 决定锚点粒度：'data-pidx' = TXT 段落级（段内偏移）；
  * 'data-chidx' = EPUB 章节级（整章纯文本上的字符偏移，兼容任意 HTML 结构）。
@@ -104,12 +122,15 @@ export function getSelectionRangeIn(anchorAttr: 'data-pidx' | 'data-chidx'): Sel
     return probe.toString().length;
   };
 
-  const start = textOffset(range.startContainer, range.startOffset);
-  const end = textOffset(range.endContainer, range.endOffset);
-  if (start < 0 || end < 0 || end <= start) return null;
+  const rawStart = textOffset(range.startContainer, range.startOffset);
+  const rawEnd = textOffset(range.endContainer, range.endOffset);
+  if (rawStart < 0 || rawEnd < 0 || rawEnd <= rawStart) return null;
 
   const fullText = startP.textContent ?? '';
-  const text = fullText.slice(start, end).trim();
+  const trimmed = trimRangeWhitespace(fullText, rawStart, rawEnd);
+  if (!trimmed) return null; // 纯空白选区
+  const { start, end } = trimmed;
+  const text = fullText.slice(start, end);
   if (!text) return null;
 
   return { anchorIndex, start, end, text, rect: range.getBoundingClientRect() };

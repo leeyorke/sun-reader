@@ -57,10 +57,12 @@ module.exports = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      // 多词家族名必须自带引号：Tailwind 原样逗号拼接，而不带引号的
+      // `Source Serif 4` 不是合法标识符序列，会让整条 font-family 声明被丢弃
       fontFamily: {
-        sans: ["Inter", "PingFang SC", "system-ui", "sans-serif"],
-        serif: ["Noto Serif SC", "Source Serif 4", "Georgia", "serif"],
-        mono: ["JetBrains Mono", "Fira Code", "monospace"],
+        sans: ["Inter", "'PingFang SC'", "system-ui", "sans-serif"],
+        serif: ["'Noto Serif SC'", "'Source Serif 4'", "Georgia", "'Songti SC'", "SimSun", "serif"],
+        mono: ["'JetBrains Mono'", "'Fira Code'", "'Cascadia Mono'", "Consolas", "monospace"],
       },
       keyframes: {
         "accordion-down": {

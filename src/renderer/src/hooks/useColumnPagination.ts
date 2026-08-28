@@ -21,6 +21,23 @@ export interface PagerHandle {
   goToPercent: (pct: number) => void;
   /** 当前阅读位置锚点（data-anchor 索引），改字号重排/保存进度用 */
   getAnchor: () => { index: number; offset: number } | null;
+  /** 实测分页信息（落盘进度用，与阅读页底部显示的页码同源） */
+  getPageInfo: () => PageInfo;
+}
+
+/**
+ * 实测分页信息。**「页」= 一列**（双页视图一屏两页），与阅读页底部
+ * 「第 x - y 页 · 共 n 页」以及书库写回的 currentPage/totalPages 同一套口径。
+ */
+export interface PageInfo {
+  /** 当前屏序号（0 起） */
+  spread: number;
+  /** 总屏数 */
+  spreads: number;
+  /** 总页数（= 总列数）。**0 表示尚未量取**，调用方此时不应据此写库 */
+  pages: number;
+  /** 当前屏左页页码（1 起） */
+  firstPage: number;
 }
 
 /** 正文锚点（与 ReaderPage 的 data-anchor 编号一致） */
@@ -31,6 +48,28 @@ export interface ReadingAnchor {
 
 /** 相邻两列的间距 */
 const GAP = 72;
+
+/**
+ * 内容流横坐标 → 列号。
+ * 用 floor 而不是 round：round 会把「列后半段」算进下一列（列宽 675 + 间距 72 时，
+ * 列内 x=1300 会被算成第 2 列），双页模式下就是整屏跳错一页；+1 只为吸收列首的亚像素误差。
+ */
+export function columnIndexAt(x: number, colW: number): number {
+  return Math.max(0, Math.floor((x + 1) / (colW + GAP)));
+}
+
+/**
+ * Range 的第一个**真有几何**的矩形。
+ * 空白文本节点（块级元素之间的换行/缩进）不生成布局盒，getBoundingClientRect
+ * 全 0；多列换行时 getClientRects 会给出多段，取第一段即视觉起点。
+ */
+function firstRealRect(range: Range): DOMRect | null {
+  for (const r of Array.from(range.getClientRects())) {
+    if (r.width || r.height) return r;
+  }
+  const b = range.getBoundingClientRect();
+  return b && (b.width || b.height) ? b : null;
+}
 
 interface Options {
   /** 每屏列数：沉浸模式 = 1，双页模式 = 2 */
@@ -55,10 +94,14 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
 
-  const [indicator, setIndicator] = React.useState({ page: 0, total: 1 });
+  const [indicator, setIndicator] = React.useState({ page: 0, total: 1, cols: 1 });
   const metricsRef = React.useRef<Metrics>({ step: 0, colW: 0 });
   const pageRef = React.useRef(0);
   const totalRef = React.useRef(1);
+  /** 实测总列数（= 总页数，双页视图一屏两列） */
+  const colsRef = React.useRef(1);
+  /** 是否已完成过一次量取（未量取时 getPageInfo().pages 返回 0，避免把「1 页」写进书库） */
+  const measuredRef = React.useRef(false);
   const initialConsumedRef = React.useRef(initialPercent <= 0 && !initialAnchor);
   /** 当前窗口起点对应的正文锚点（改字号重排/保存进度时按它恢复，而非按比例） */
   const anchorRef = React.useRef<ReadingAnchor | null>(null);
@@ -81,7 +124,7 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     if (!el) return -1;
     const { colW } = metricsRef.current;
     if (colW <= 0) return -1;
-    return Math.max(0, Math.round(el.offsetLeft / (colW + GAP)));
+    return columnIndexAt(el.offsetLeft, colW);
   }, []);
 
   /** 捕获当前窗口起点的锚点（窗口左缘经过的最后一个锚元素） */
@@ -159,16 +202,19 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     const changed =
       totalRef.current !== pages ||
       pageRef.current !== nextPage ||
+      colsRef.current !== cols ||
       reportedRef.current?.page !== nextPage;
 
     totalRef.current = pages;
+    colsRef.current = cols;
     pageRef.current = nextPage;
+    measuredRef.current = true;
     applyTransform();
     // 锚点随新位置更新（下一次重排按内容位置恢复，而不是按比例跳变）
     anchorRef.current = captureAnchor();
 
     if (changed) {
-      setIndicator({ page: nextPage, total: pages });
+      setIndicator({ page: nextPage, total: pages, cols });
       reportedRef.current = { page: nextPage, total: pages };
       onPageRef.current?.(nextPage, pages);
     }
@@ -208,7 +254,7 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
       pageRef.current = clamped;
       applyTransform();
       anchorRef.current = captureAnchor(); // 手动翻页后锚点同步，改字号时仍按内容位置恢复
-      setIndicator({ page: clamped, total: totalRef.current });
+      setIndicator({ page: clamped, total: totalRef.current, cols: colsRef.current });
       reportedRef.current = { page: clamped, total: totalRef.current };
       onPageRef.current?.(clamped, totalRef.current);
     },
@@ -227,15 +273,14 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
       if (!el) return;
       const { colW } = metricsRef.current;
       if (colW <= 0) return;
-      const colIndex = Math.max(0, Math.round(el.offsetLeft / (colW + GAP)));
-      goToPage(Math.floor(colIndex / columns));
+      goToPage(Math.floor(columnIndexAt(el.offsetLeft, colW) / columns));
     },
     [columns, goToPage]
   );
 
   /**
    * 文本偏移 → 所在页：在 rootSelector 容器内按 TreeWalker 累计文本长度定位到
-   * 第 offset 个字符，用 Range 包围盒反推所在列（补回当前 translateX 位移）。
+   * 第 offset 个字符，用 Range 包围盒反推所在列。
    * EPUB 划线/搜索命中定位用。
    */
   const goToTextOffset = React.useCallback(
@@ -261,25 +306,36 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
       }
       if (!target) return;
 
-      const range = document.createRange();
-      const startOff = Math.min(targetOff, target.length);
-      range.setStart(target, startOff);
-      // 折叠 Range 的包围盒可能为 0，多包一个字符保证有几何信息
-      range.setEnd(target, Math.min(startOff + 1, target.length));
-      let rect = range.getBoundingClientRect();
-      if (!rect || (!rect.width && !rect.height)) {
-        range.collapse(true);
-        rect = range.getBoundingClientRect();
+      const rectAt = (node: Text, off: number): DOMRect | null => {
+        const range = document.createRange();
+        const startOff = Math.min(off, node.length);
+        range.setStart(node, startOff);
+        // 折叠 Range 的包围盒可能为 0，多包一个字符保证有几何信息
+        range.setEnd(node, Math.min(startOff + 1, node.length));
+        return firstRealRect(range);
+      };
+
+      // 偏移可能正好落在**空白文本节点**上（块级元素之间的 "\n"/缩进——选区起点
+      // 常被浏览器放在这里）。这类节点不生成布局盒，取到的 rect 全 0；旧代码用
+      // `rect.left || ctRect.left` 兜底，等于把 0 当成有效坐标 → 一律跳到第 0 页
+      // （封面）。这里改为沿文档顺序往后找第一个真有几何的文本节点。
+      let rect = rectAt(target, targetOff);
+      let guard = 0;
+      while (!rect && guard++ < 500 && walker.nextNode()) {
+        const node = walker.currentNode as Text;
+        if (!node.data?.length) continue;
+        rect = rectAt(node, 0);
       }
 
       const { colW, step } = metricsRef.current;
       if (colW <= 0 || step <= 0) return;
-      const ctRect = ct.getBoundingClientRect();
       // rect 与 ctRect 都是应用位移后的屏幕坐标，二者相减已抵消 translateX，
-      // 结果即内容流坐标（此处不能再加回当前位移，否则跳转目标随当前页漂移）
-      const xRaw = (rect.left || ctRect.left) - ctRect.left;
-      const colIndex = Math.max(0, Math.round(xRaw / (colW + GAP)));
-      goToPage(Math.floor(colIndex / columns));
+      // 结果即内容流坐标（此处不能再加回当前位移，否则跳转目标随当前页漂移）；
+      // 整章都没有几何（隐藏章节等）时退回章节起点，绝不静默落到第 0 页
+      const xRaw = rect
+        ? rect.left - ct.getBoundingClientRect().left
+        : (root as HTMLElement).offsetLeft;
+      goToPage(Math.floor(columnIndexAt(xRaw, colW) / columns));
     },
     [columns, goToPage]
   );
@@ -297,6 +353,8 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     contentRef,
     page: indicator.page,
     total: indicator.total,
+    /** 实测总页数（= 总列数）：底部页码显示与落盘 totalPages 都用它 */
+    pages: indicator.cols,
     next,
     prev,
     goToPage,
@@ -304,5 +362,11 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     goToTextOffset,
     goToPercent,
     getAnchor: () => anchorRef.current,
+    getPageInfo: (): PageInfo => ({
+      spread: pageRef.current,
+      spreads: totalRef.current,
+      pages: measuredRef.current ? colsRef.current : 0,
+      firstPage: Math.min(colsRef.current, pageRef.current * columns + 1),
+    }),
   };
 }

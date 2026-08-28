@@ -30,11 +30,34 @@ export const MAX_FONT_SIZE = 32;
 export const DEFAULT_FONT_SIZE = 18;
 export const FONT_SIZE_STEP = 2;
 
+/**
+ * 阅读字体栈。**多词家族名必须加引号**：不带引号的 font-family 值是「标识符序列」，
+ * 而 `Source Serif 4` 里的 `4` 不是合法标识符 → 整条 font-family 声明被判无效并丢弃
+ * （正文于是继承 Tailwind 给 html 的无衬线栈，中文静默变成微软雅黑）。
+ * 这个栈会被 resolveFontFamily 接在用户所选字体后面，一处非法等于所有字体设置失效。
+ * 末尾补上 Windows/macOS 实装的中文衬线体，避免中文落到系统默认黑体。
+ */
 export const FONT_FAMILIES = [
-  { value: 'serif', label: '衬线体', family: 'Noto Serif SC, Source Serif 4, Georgia, serif' },
-  { value: 'sans', label: '无衬线', family: 'Inter, PingFang SC, -apple-system, sans-serif' },
-  { value: 'mono', label: '等宽', family: 'JetBrains Mono, Fira Code, monospace' },
+  {
+    value: 'serif',
+    label: '衬线体',
+    family: "'Noto Serif SC', 'Source Serif 4', Georgia, 'Songti SC', SimSun, serif",
+  },
+  {
+    value: 'sans',
+    label: '无衬线',
+    family: "Inter, 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif",
+  },
+  {
+    value: 'mono',
+    label: '等宽',
+    family: "'JetBrains Mono', 'Fira Code', 'Cascadia Mono', Consolas, monospace",
+  },
 ];
+
+/** 阅读页代码块字体栈（等宽，同样要求家族名带引号） */
+export const READER_MONO_FAMILY =
+  "'JetBrains Mono', 'Fira Code', 'Cascadia Mono', Consolas, monospace";
 
 // ========================================
 // 行高和边距

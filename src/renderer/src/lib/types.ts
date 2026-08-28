@@ -185,7 +185,9 @@ export interface ElectronAPI {
       bookId: string,
       progress: number,
       currentPage: number,
-      anchor?: { index: number; offset: number }
+      anchor?: { index: number; offset: number },
+      /** 渲染层实测总页数（一列 = 一页），覆盖导入时按字数的估算 */
+      totalPages?: number
     ) => Promise<{ success: boolean }>;
   };
   dialog: {

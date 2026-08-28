@@ -3,7 +3,8 @@
  *
  * 触发按钮显示当前字体（按其实际字体预览）；面板顶部搜索框过滤，
  * 列表 = 3 个默认字体栈（衬线/无衬线/等宽）+ 系统已装字体（按 family 名
- * 去重、字母序，每项以自身字体预览）。系统字体超过 80 款时提示继续搜索。
+ * 去重、字母序，每项以自身字体预览；浏览器按该名匹配不到字体的标「未匹配」）。
+ * 系统字体超过 80 款时提示继续搜索。
  * fontFamily 存储值为：FONT_FAMILIES 的键 或 系统 family 名（prefs.ts 负责解析）。
  */
 
@@ -12,7 +13,7 @@ import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FONT_FAMILIES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
-import { resolveFontFamily } from '@/lib/prefs';
+import { isFontFamilyAvailable, resolveFontFamily } from '@/lib/prefs';
 import { useSystemFonts } from '@/hooks/useSystemFonts';
 
 const MAX_VISIBLE = 80;
@@ -101,20 +102,27 @@ export function FontPicker({ value, onChange }: FontPickerProps) {
                     系统字体（{fonts.length}）
                   </p>
                 )}
-                {visible.map((f) => (
-                  <button
-                    key={f}
-                    title={f}
-                    onClick={() => pick(f)}
-                    className={cn(
-                      'w-full text-left text-sm px-2.5 py-1.5 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors truncate',
-                      value === f && 'bg-primary/10 text-primary'
-                    )}
-                    style={{ fontFamily: `'${f}', serif` }}
-                  >
-                    {f}
-                  </button>
-                ))}
+                {visible.map((f) => {
+                  const usable = isFontFamilyAvailable(f);
+                  return (
+                    <button
+                      key={f}
+                      title={usable ? f : `${f}（浏览器无法按此名匹配到字体，选它会回退到默认衬线体）`}
+                      onClick={() => pick(f)}
+                      className={cn(
+                        'w-full flex items-center justify-between text-left text-sm px-2.5 py-1.5 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors',
+                        value === f && 'bg-primary/10 text-primary'
+                      )}
+                    >
+                      <span className="truncate" style={{ fontFamily: resolveFontFamily(f) }}>
+                        {f}
+                      </span>
+                      {!usable && (
+                        <span className="text-[10px] text-muted-foreground shrink-0 ml-2">未匹配</span>
+                      )}
+                    </button>
+                  );
+                })}
                 {visible.length === 0 && (
                   <p className="text-xs text-muted-foreground px-2.5 py-2">无匹配字体</p>
                 )}

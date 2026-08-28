@@ -434,13 +434,17 @@ ipcMain.handle('delete-book', async (event, bookId) => {
   return { success: false, error: '书籍不存在' };
 });
 
-// 更新阅读进度（anchor = { index, offset } 正文锚点，打开/重排时精确恢复位置）
-ipcMain.handle('update-progress', (event, { bookId, progress, currentPage, anchor }) => {
+// 更新阅读进度（anchor = { index, offset } 正文锚点，打开/重排时精确恢复位置；
+// totalPages = 渲染层实测总页数，覆盖导入时按字数的估算，使书库与阅读页页数一致）
+ipcMain.handle('update-progress', (event, { bookId, progress, currentPage, anchor, totalPages }) => {
   const book = libraryData.books.find(b => b.id === bookId);
   if (book) {
     book.readingProgress = progress;
     book.currentPage = currentPage;
     book.lastRead = new Date().toISOString();
+    if (Number.isFinite(totalPages) && totalPages > 0) {
+      book.totalPages = Math.round(totalPages);
+    }
     if (anchor && Number.isInteger(anchor.index) && anchor.index >= 0) {
       book.readingAnchor = { index: anchor.index, offset: Number(anchor.offset) || 0 };
     }

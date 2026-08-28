@@ -33,9 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 读取书籍内容
     readContent: (bookId) => ipcRenderer.invoke('read-book-content', bookId),
 
-    // 更新阅读进度（anchor 为正文锚点：改字号/重开后精确恢复位置）
-    updateProgress: (bookId, progress, currentPage, anchor) =>
-      ipcRenderer.invoke('update-progress', { bookId, progress, currentPage, anchor })
+    // 更新阅读进度（anchor 为正文锚点：改字号/重开后精确恢复位置；
+    // totalPages 为渲染层实测总页数，覆盖导入时按字数的估算）
+    updateProgress: (bookId, progress, currentPage, anchor, totalPages) =>
+      ipcRenderer.invoke('update-progress', { bookId, progress, currentPage, anchor, totalPages })
   },
 
   // 对话框

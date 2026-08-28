@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button';
 import { SearchModal } from '@/components/reader/SearchModal';
 import { DualPageView } from '@/components/reader/DualPageView';
 import { BookmarksModal, NotesModal, TocModal } from '@/components/reader/reader-modals';
-import { ANNOTATION_COLORS, FONT_SIZE_STEP } from '@/lib/constants';
+import { ANNOTATION_COLORS, FONT_SIZE_STEP, READER_MONO_FAMILY } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import {
   clampFontSize,
@@ -44,7 +44,6 @@ import {
   bookresUrl,
   collectTextRanges,
   prepareChapterHtml,
-  resolveRelativePath,
   rewriteCssUrls,
   scopeCss,
   stripFontFamily,
@@ -73,6 +72,8 @@ interface EpubChapter {
   text: string;
   /** 本章原书 CSS，作用域化为 #book-flow .epub-chapter[data-chidx="i"]（只影响本章） */
   css: string;
+  /** 正文图片数量（识别原书自带的「纯封面图」页） */
+  imageCount: number;
 }
 
 interface EpubContent {
@@ -92,7 +93,7 @@ const HIGHLIGHT_CSS = ANNOTATION_COLORS.map(
  * 共享 CSS / 章内 <style> / 元素 style 属性），代码块由后续等宽规则恢复。
  * 随 prefs 变化重建实时生效。
  */
-const READER_MONO = 'JetBrains Mono, Fira Code, Cascadia Mono, Consolas, monospace';
+const READER_MONO = READER_MONO_FAMILY;
 function readerTypographyCss(prefs: ReaderPrefs): string {
   const user = resolveFontFamily(prefs.fontFamily);
   return [
@@ -129,6 +130,10 @@ export function ReaderPage() {
   const [epub, setEpub] = React.useState<EpubContent | null>(null);
   const [unsupportedFormat, setUnsupportedFormat] = React.useState<string | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /** 章节构建进度（大书要解析上百章，进度比空转的转圈更有信息量） */
+  const [buildProgress, setBuildProgress] = React.useState<{ done: number; total: number } | null>(
+    null
+  );
   const { data: coverRes } = useBookCover(bookId);
   const coverUrl = coverRes?.dataUrl ?? null;
 
@@ -235,6 +240,19 @@ export function ReaderPage() {
     return map;
   }, [book?.notes]);
 
+  /**
+   * 原书自带的「纯封面图」页（calibre 的 titlepage.xhtml 之类：spine 首项、
+   * 一张图、没有文字）。阅读器已经用抽取出的封面渲染了首页，两者相邻会让
+   * 首屏出现两张封面图；有抽取封面时就跳过原书那页（否则保留它当封面）。
+   */
+  const duplicateCoverChidx = React.useMemo(() => {
+    if (!coverUrl) return null;
+    const first = epub?.chapters.find((c) => c.html);
+    if (!first || first.chidx !== 0) return null;
+    if (first.text.trim().length > 0 || first.imageCount < 1) return null;
+    return first.chidx;
+  }, [epub, coverUrl]);
+
   // ---------- 内容加载 ----------
   React.useEffect(() => {
     let cancelled = false;
@@ -242,6 +260,7 @@ export function ReaderPage() {
     setEpub(null);
     setLoadError(null);
     setUnsupportedFormat(null);
+    setBuildProgress(null);
     setProgressPct(0);
     setCurrentChapter('');
     progressRef.current = 0;
@@ -263,6 +282,7 @@ export function ReaderPage() {
         const fetchedHrefs = new Set<string>();
         const SHARED_SCOPE = '#book-flow .epub-chapter[data-chidx]';
         const CONCURRENCY = 6;
+        setBuildProgress({ done: 0, total });
 
         const buildOne = async (i: number) => {
           const ch = cts[i];
@@ -272,46 +292,36 @@ export function ReaderPage() {
             ? zipPath.slice(0, zipPath.lastIndexOf('/') + 1)
             : '';
           const chapterScope = `#book-flow .epub-chapter[data-chidx="${i}"]`;
-          const inlineCss: string[] = [];
           const sharedCss: string[] = [];
 
-          try {
-            const doc = new DOMParser().parseFromString(xhtml, 'text/html');
-            const links = [...doc.querySelectorAll('link[rel~="stylesheet" i][href]')];
-            for (const link of links) {
-              const cssPath = resolveRelativePath(chapterDir, link.getAttribute('href') ?? '');
-              if (fetchedHrefs.has(cssPath)) continue;
-              fetchedHrefs.add(cssPath);
-              const cssDir = cssPath.includes('/')
-                ? cssPath.slice(0, cssPath.lastIndexOf('/') + 1)
-                : '';
-              try {
-                const r = await fetch(bookresUrl(bookId, cssPath));
-                if (r.ok) {
-                  sharedCss.push(
-                    scopeCss(
-                      stripFontFamily(rewriteCssUrls(await r.text(), cssDir, bookId)),
-                      SHARED_SCOPE
-                    )
-                  );
-                }
-              } catch {
-                /* 缺失样式文件静默跳过 */
+          // 一次 DOMParser 同时产出正文与本章样式来源（百章大书解析成本减半）
+          const prepared = prepareChapterHtml(xhtml, bookId, zipPath);
+
+          for (const cssPath of prepared.cssHrefs) {
+            if (fetchedHrefs.has(cssPath)) continue;
+            fetchedHrefs.add(cssPath);
+            const cssDir = cssPath.includes('/')
+              ? cssPath.slice(0, cssPath.lastIndexOf('/') + 1)
+              : '';
+            try {
+              const r = await fetch(bookresUrl(bookId, cssPath));
+              if (r.ok) {
+                sharedCss.push(
+                  scopeCss(
+                    stripFontFamily(rewriteCssUrls(await r.text(), cssDir, bookId)),
+                    SHARED_SCOPE
+                  )
+                );
               }
+            } catch {
+              /* 缺失样式文件静默跳过 */
             }
-            doc.querySelectorAll('style').forEach((s) => {
-              inlineCss.push(
-                scopeCss(
-                  stripFontFamily(rewriteCssUrls(s.textContent ?? '', chapterDir, bookId)),
-                  chapterScope
-                )
-              );
-            });
-          } catch {
-            /* 解析失败按无样式处理 */
           }
 
-          const prepared = prepareChapterHtml(xhtml, bookId, zipPath);
+          const inlineCss = prepared.inlineCss.map((css) =>
+            scopeCss(stripFontFamily(rewriteCssUrls(css, chapterDir, bookId)), chapterScope)
+          );
+
           chapters[i] = {
             chidx: i,
             title: ch.title ?? '',
@@ -319,6 +329,7 @@ export function ReaderPage() {
             html: prepared.html,
             text: prepared.text,
             css: inlineCss.join('\n'),
+            imageCount: prepared.imageCount,
           };
           sharedCssPerChapter[i] = sharedCss.join('\n');
         };
@@ -328,6 +339,10 @@ export function ReaderPage() {
           for (let k = base; k < Math.min(base + CONCURRENCY, total); k++) batch.push(buildOne(k));
           await Promise.all(batch);
           if (cancelled) return;
+          setBuildProgress({ done: Math.min(base + CONCURRENCY, total), total });
+          // 让出一个宏任务：样式表命中缓存后整个循环只有微任务，React 排不上队，
+          // 百章大书会「卡住」两秒而进度文案一次都刷不出来
+          await new Promise((r) => setTimeout(r, 0));
         }
         if (cancelled) return;
         setEpub({
@@ -434,11 +449,19 @@ export function ReaderPage() {
   const saveProgress = React.useCallback(
     (pct: number) => {
       if (!bookId || !window.electronAPI) return;
-      const totalPages = book?.totalPages || Math.ceil(totalChars / 1000) || 1;
-      const currentPage = Math.max(1, Math.ceil((pct / 100) * totalPages));
+      // 页数以**实测分页**为准（一列 = 一页），与阅读页底部「共 n 页」同源。
+      // 导入时那个 字数/1000 的估算只在首次打开前顶着（DDIA 估 507 页、实测 127 页，
+      // 书库显示「剩余 499 页」而阅读页显示「共 128 页」就是这两套口径打起来了）。
+      const info = dualPagerRef.current?.getPageInfo();
+      const fallbackTotal = book?.totalPages || Math.ceil(totalChars / 1000) || 1;
+      const totalPages = info && info.pages > 0 ? info.pages : fallbackTotal;
+      const currentPage =
+        info && info.pages > 0
+          ? info.firstPage
+          : Math.max(1, Math.ceil((pct / 100) * totalPages));
       // 附带正文锚点：改字号重排/重新打开时按内容位置精确恢复（而非按比例跳变）
       const anchor = dualPagerRef.current?.getAnchor() ?? undefined;
-      window.electronAPI.books.updateProgress(bookId, Math.round(pct), currentPage, anchor);
+      window.electronAPI.books.updateProgress(bookId, Math.round(pct), currentPage, anchor, totalPages);
       qc.setQueryData<Book[]>(BOOKS_QUERY_KEY, (old) =>
         old?.map((b) =>
           b.id === bookId
@@ -446,6 +469,7 @@ export function ReaderPage() {
                 ...b,
                 readingProgress: Math.round(pct),
                 currentPage,
+                totalPages,
                 lastRead: new Date().toISOString(),
               }
             : b
@@ -940,8 +964,13 @@ export function ReaderPage() {
 
   if (!sections && !epub) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-full flex flex-col items-center justify-center gap-3">
         <Spinner />
+        <p className="text-xs text-muted-foreground">
+          {buildProgress && buildProgress.total > 1
+            ? `正在解析本书排版… ${buildProgress.done}/${buildProgress.total} 章`
+            : '正在打开…'}
+        </p>
       </div>
     );
   }
@@ -960,18 +989,30 @@ export function ReaderPage() {
       )}
       {epub.chapters
         .filter((c) => c.html)
-        .map((c) => (
-          <section
-            key={c.chidx}
-            data-chidx={c.chidx}
-            data-anchor={c.chidx}
-            className="epub-chapter"
-            onClick={handleBookLinkClick}
-          >
-            {c.css ? <style>{c.css}</style> : null}
-            <div className="epub-body" dangerouslySetInnerHTML={{ __html: c.html }} />
-          </section>
-        ))}
+        .map((c) =>
+          c.chidx === duplicateCoverChidx ? (
+            // 原书自带的纯封面图页与上面抽取出的封面重复（且 calibre 的
+            // preserveAspectRatio="none" 会把它拉变形）：保留占位节点让 data-chidx
+            // 编号与跳转选择器不变，但不渲染内容（display:none 不生成列，不留空白页）
+            <section
+              key={c.chidx}
+              data-chidx={c.chidx}
+              className="epub-chapter"
+              style={{ display: 'none' }}
+            />
+          ) : (
+            <section
+              key={c.chidx}
+              data-chidx={c.chidx}
+              data-anchor={c.chidx}
+              className="epub-chapter"
+              onClick={handleBookLinkClick}
+            >
+              {c.css ? <style>{c.css}</style> : null}
+              <div className="epub-body" dangerouslySetInnerHTML={{ __html: c.html }} />
+            </section>
+          )
+        )}
     </>
   ) : (
     <>{renderBlocks(blocks)}</>

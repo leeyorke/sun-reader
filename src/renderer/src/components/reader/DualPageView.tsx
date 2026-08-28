@@ -86,7 +86,7 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
     const [dockVisible, setDockVisible] = React.useState(true);
     const hideTimer = React.useRef<number | null>(null);
 
-    const { viewportRef, contentRef, page, total, next, prev, goToElement, goToTextOffset, goToPercent, getAnchor } =
+    const { viewportRef, contentRef, page, total, pages, next, prev, goToElement, goToTextOffset, goToPercent, getAnchor, getPageInfo } =
       useColumnPagination({
         columns: 2,
         deps: layoutDeps,
@@ -98,8 +98,8 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
     // 暴露给父组件：键盘路由（next/prev）+ 弹窗跳转（goToElement/goToTextOffset/goToPercent）
     React.useImperativeHandle(
       ref,
-      () => ({ next, prev, goToElement, goToTextOffset, goToPercent, getAnchor }),
-      [next, prev, goToElement, goToTextOffset, goToPercent, getAnchor]
+      () => ({ next, prev, goToElement, goToTextOffset, goToPercent, getAnchor, getPageInfo }),
+      [next, prev, goToElement, goToTextOffset, goToPercent, getAnchor, getPageInfo]
     );
 
     const poke = React.useCallback(() => {
@@ -115,9 +115,11 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
       };
     }, [poke]);
 
-    // 进度文字（页面中下方）：跨页 page/total 换算成页码区间与百分比
-    const totalPages = total * 2; // 每个跨页约两页（最后一页可能为半页）
-    const pageLabel = `${Math.min(page * 2 + 1, totalPages)} - ${Math.min(page * 2 + 2, totalPages)}`;
+    // 进度文字（页面中下方）：一列 = 一页，pages 是实测总列数（书库写回的
+    // totalPages 用的同一个数，两处口径必须一致），末屏可能只有一页
+    const firstPage = Math.min(page * 2 + 1, pages);
+    const lastPage = Math.min(page * 2 + 2, pages);
+    const pageLabel = firstPage === lastPage ? `${firstPage}` : `${firstPage} - ${lastPage}`;
     const pct = total > 0 ? ((page + 1) / total) * 100 : 0;
 
     return (
@@ -177,7 +179,7 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
         {/* 进度文字：常驻阅读页面中下方（页码区间 + 总页数 + 百分比，无进度条） */}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none select-none">
           <span className="text-xs text-muted-foreground tabular-nums opacity-80">
-            第 {pageLabel} 页 · 共约 {totalPages} 页 · {Math.round(pct)}%
+            第 {pageLabel} 页 · 共 {pages} 页 · {Math.round(pct)}%
           </span>
         </div>
 

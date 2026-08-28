@@ -176,27 +176,56 @@ export function textOffsetFromPoint(x: number, y: number, root: HTMLElement): nu
   return r.toString().length;
 }
 
+/** prepareChapterHtml 的产物：净化后的正文 + 该章样式来源 + 图片数量 */
+export interface PreparedChapter {
+  /** 净化重写后的 body.innerHTML */
+  html: string;
+  /** 整章纯文本（划线/搜索的偏移基准） */
+  text: string;
+  /** 正文中的图片数量（<img> 与 svg <image>）——用于识别「纯封面图页」 */
+  imageCount: number;
+  /** <link rel=stylesheet> 的 zip 内路径（已按本章目录解析） */
+  cssHrefs: string[];
+  /** 章内 <style> 原文（head/body 均计） */
+  inlineCss: string[];
+}
+
 /**
  * 净化并重写一章的 body 内层 HTML：
  * - 移除脚本/样式/表单等节点与 on* 事件属性、javascript: 链接；
  * - img/source/audio/video/track/image 的资源地址重写为 bookres://；
  * - <a> 链接改写为 data-book-link（书内跳转）或 data-external-href（外链），
- *   移除原 href 防止默认导航；返回 body.innerHTML。
+ *   移除原 href 防止默认导航；
+ * - 顺带返回本章样式表路径/内联样式原文与图片数量（同一次解析出全部信息）。
  */
 export function prepareChapterHtml(
   xhtml: string,
   bookId: string,
   chapterZipPath: string
-): { html: string; text: string } {
+): PreparedChapter {
+  const empty: PreparedChapter = {
+    html: '',
+    text: '',
+    imageCount: 0,
+    cssHrefs: [],
+    inlineCss: [],
+  };
   const doc = new DOMParser().parseFromString(xhtml, 'text/html');
   const body = doc.body;
-  if (!body) return { html: '', text: '' };
-
-  body.querySelectorAll(STRIP_SELECTORS).forEach((el) => el.remove());
+  if (!body) return empty;
 
   const chapterDir = chapterZipPath.includes('/')
     ? chapterZipPath.slice(0, chapterZipPath.lastIndexOf('/') + 1)
     : '';
+
+  // 样式先于净化收集（净化会删掉 link/style；head 里的也要拿到）：
+  // 同一次 DOMParser 结果既出正文又出样式，避免每章解析两遍（百章大书的开页耗时大头）
+  const cssHrefs = [...doc.querySelectorAll('link[rel~="stylesheet" i][href]')].map((el) =>
+    resolveRelativePath(chapterDir, el.getAttribute('href') ?? '')
+  );
+  const inlineCss = [...doc.querySelectorAll('style')].map((el) => el.textContent ?? '');
+
+  body.querySelectorAll(STRIP_SELECTORS).forEach((el) => el.remove());
 
   const toRes = (raw: string | null): string | null => {
     if (!raw) return null;
@@ -273,5 +302,11 @@ export function prepareChapterHtml(
   // 图片懒加载：多列内容全部存在于 DOM，非当前屏的图不必立即解码
   body.querySelectorAll('img').forEach((el) => el.setAttribute('loading', 'lazy'));
 
-  return { html: body.innerHTML, text: body.textContent ?? '' };
+  return {
+    html: body.innerHTML,
+    text: body.textContent ?? '',
+    imageCount: body.querySelectorAll('img, image').length,
+    cssHrefs: cssHrefs.filter(Boolean),
+    inlineCss,
+  };
 }

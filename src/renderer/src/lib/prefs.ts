@@ -64,36 +64,73 @@ function normalizeSystemFontName(value: string): string {
   return value.replace(/[\s_-]+Regular$/i, '').trim();
 }
 
+/** 单个家族名 → 合法 CSS 值：一律加引号（多词/含数字的名字不加引号会让整条声明失效） */
+export function quoteFontFamily(name: string): string {
+  return `'${name.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+// ---------- 字体可用性探测 ----------
+// 不能用 document.fonts.check：按规范它只回答「FontFaceSet 里有没有未加载的匹配项」，
+// 系统字体不在 FontFaceSet 中，于是任何名字（含 'Zzz No Such Font'）都返回 true，
+// 实测在 Electron/Chromium 上恒为 true，完全无法判断系统字体是否存在。
+// 这里改用 canvas 宽度法：把候选名放在三种 generic 之前，若渲染宽度与 generic
+// 基线一致，说明候选名没被命中（回退到了 generic）。
+const PROBE_TEXT = '汉字测试永Abcmw0';
+const PROBE_BASES = ['serif', 'sans-serif', 'monospace'];
+const probeCache = new Map<string, boolean>();
+let probeCtx: CanvasRenderingContext2D | null | undefined;
+
+function getProbeCtx(): CanvasRenderingContext2D | null {
+  if (probeCtx !== undefined) return probeCtx;
+  try {
+    probeCtx = document.createElement('canvas').getContext('2d');
+  } catch {
+    probeCtx = null;
+  }
+  return probeCtx;
+}
+
 /**
- * 该字体名当前是否真能被 Chromium 命中（generic 键恒可用）。
- * 旧版本从注册表值名存下的名字可能是乱码或不存在的家族名，
- * CSS 静默回退成微软雅黑很难排查；这里用 document.fonts.check 显式验证。
+ * 该字体名当前能否被 Chromium 真正命中（generic 键恒可用）。
+ * 用于失效名自愈与设置页提示；渲染时**不据此丢弃**用户选择（见 resolveFontFamily）。
  */
 export function isFontFamilyAvailable(value: string): boolean {
   if (!value || FONT_FAMILIES.some((f) => f.value === value)) return true;
-  try {
-    if (typeof document === 'undefined' || !document.fonts?.check) return true;
-    return document.fonts.check(`16px "${value.replace(/["'\\]/g, '')}"`);
-  } catch {
-    return true;
+  const name = normalizeSystemFontName(value);
+  if (!name) return true;
+  const cached = probeCache.get(name);
+  if (cached !== undefined) return cached;
+  const ctx = getProbeCtx();
+  if (!ctx) return true; // 无 canvas（非浏览器环境）时不做判断
+  const quoted = quoteFontFamily(name);
+  let hit = false;
+  for (const base of PROBE_BASES) {
+    ctx.font = `48px ${base}`;
+    const baseWidth = ctx.measureText(PROBE_TEXT).width;
+    ctx.font = `48px ${quoted}, ${base}`;
+    if (Math.abs(ctx.measureText(PROBE_TEXT).width - baseWidth) > 0.5) {
+      hit = true;
+      break;
+    }
   }
+  probeCache.set(name, hit);
+  return hit;
 }
 
 /**
  * 偏好值 → CSS font-family 串：
  * - FONT_FAMILIES 的键（serif/sans/mono）→ 对应字体栈；
- * - 其他非空值视为系统字体 family 名 → '字体名' + 衬线栈兜底（缺字回退）；
- * - 空/未知/无法命中的名字 → 默认衬线栈（不静默回退成系统黑体）。
+ * - 其他非空值视为系统字体 family 名 → 引号包裹后置于最前 + 衬线栈兜底（缺字/未命中回退）；
+ * - 空值 → 默认衬线栈。
+ * 命不中的名字也保留（宽度探测存在误判空间，丢掉用户选择的代价更大），
+ * 反正 CSS 会自然回退到后面的兜底栈。
  */
 export function resolveFontFamily(value: string): string {
   const generic = FONT_FAMILIES.find((f) => f.value === value);
   if (generic) return generic.family;
-  if (!value) return FONT_FAMILIES[0].family;
-  if (!isFontFamilyAvailable(value)) return FONT_FAMILIES[0].family;
-  const safe = normalizeSystemFontName(value)
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'");
-  return `'${safe}', ${FONT_FAMILIES[0].family}`;
+  const name = normalizeSystemFontName(value);
+  if (!name) return FONT_FAMILIES[0].family;
+  return `${quoteFontFamily(name)}, ${FONT_FAMILIES[0].family}`;
 }
 
 /**
