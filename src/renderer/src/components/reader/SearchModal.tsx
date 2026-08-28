@@ -10,10 +10,10 @@ import { SEARCH_DEBOUNCE } from '@/lib/constants';
 interface SearchModalProps {
   open: boolean;
   onClose: () => void;
-  /** 全部段落文本 */
+  /** 全部文本单元（TXT=正文块 / EPUB=章） */
   paragraphs: string[];
-  /** 点击结果：滚动到对应段落 */
-  onJumpTo: (paragraphIndex: number) => void;
+  /** 点击结果：跳到对应文本单元；matchOffset = 命中词在单元内的字符偏移 */
+  onJumpTo: (paragraphIndex: number, matchOffset: number) => void;
 }
 
 export function SearchModal({ open, onClose, paragraphs, onJumpTo }: SearchModalProps) {
@@ -53,6 +53,17 @@ export function SearchModal({ open, onClose, paragraphs, onJumpTo }: SearchModal
 
   if (!open) return null;
 
+  /** 命中词在文本单元内的偏移（跳转定位用） */
+  const matchOffsetOf = (idx: number): number => {
+    const q = query.trim().toLowerCase();
+    if (!q) return 0;
+    return Math.max(0, (paragraphs[idx] ?? '').toLowerCase().indexOf(q));
+  };
+  const jumpTo = (idx: number) => {
+    onJumpTo(idx, matchOffsetOf(idx));
+    onClose();
+  };
+
   const highlight = (text: string) => {
     const q = query.trim();
     if (!q) return text;
@@ -85,7 +96,7 @@ export function SearchModal({ open, onClose, paragraphs, onJumpTo }: SearchModal
                 onClose();
               }
               if (e.key === 'Enter' && results.length > 0) {
-                onJumpTo(results[0]);
+                jumpTo(results[0]);
               }
             }}
             placeholder="搜索内容..."
@@ -114,10 +125,7 @@ export function SearchModal({ open, onClose, paragraphs, onJumpTo }: SearchModal
                   <li key={idx}>
                     <button
                       className="w-full text-left text-sm leading-relaxed rounded-md px-3 py-2.5 hover:bg-accent hover:text-accent-foreground transition-colors line-clamp-3"
-                      onClick={() => {
-                        onJumpTo(idx);
-                        onClose();
-                      }}
+                      onClick={() => jumpTo(idx)}
                     >
                       {highlight(paragraphs[idx])}
                     </button>

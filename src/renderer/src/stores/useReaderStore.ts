@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import type { Book, TocItem, ViewMode } from '@/lib/types';
+import type { Book, TocItem } from '@/lib/types';
 
 interface ReaderState {
   // 当前书籍
@@ -31,7 +31,6 @@ interface ReaderState {
   fontFamily: string;
 
   // 视图状态
-  viewMode: ViewMode;
   isFullscreen: boolean;
   isToolbarVisible: boolean;
   isSidebarOpen: boolean;
@@ -85,7 +84,6 @@ interface ReaderActions {
   setFontFamily: (family: string) => void;
 
   // 视图操作
-  setViewMode: (mode: ViewMode) => void;
   toggleFullscreen: () => void;
   toggleToolbar: () => void;
   toggleSidebar: () => void;
@@ -133,7 +131,6 @@ const initialState: ReaderState = {
   lineHeight: 1.75,
   pageMargins: 24,
   fontFamily: 'serif',
-  viewMode: 'standard',
   isFullscreen: false,
   isToolbarVisible: true,
   isSidebarOpen: false,
@@ -185,7 +182,6 @@ export const useReaderStore = create<ReaderState & ReaderActions>()(
       setFontFamily: (family) => set((state) => { state.fontFamily = family; }),
 
       // 视图操作
-      setViewMode: (mode) => set((state) => { state.viewMode = mode; }),
       toggleFullscreen: () => set((state) => { state.isFullscreen = !state.isFullscreen; }),
       toggleToolbar: () => set((state) => { state.isToolbarVisible = !state.isToolbarVisible; }),
       toggleSidebar: () => set((state) => { state.isSidebarOpen = !state.isSidebarOpen; }),

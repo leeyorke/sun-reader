@@ -14,12 +14,11 @@ export const APP_NAME = 'Sun Reader';
 // 主题
 // ========================================
 
-export const THEMES: Theme[] = ['light', 'dark', 'sepia'];
+export const THEMES: Theme[] = ['light', 'dark'];
 
 export const THEME_LABELS: Record<Theme, string> = {
   light: '浅色',
   dark: '深色',
-  sepia: ' Sepia',
 };
 
 // ========================================
@@ -129,12 +128,4 @@ export const ANNOTATION_COLORS = [
   { value: '#BD10E0', label: '紫色' },
 ] as const;
 
-// ========================================
-// 视图模式
-// ========================================
 
-export const VIEW_MODES = [
-  { value: 'standard', label: '标准', icon: 'Layout' },
-  { value: 'immersive', label: '沉浸', icon: 'Maximize' },
-  { value: 'dual', label: '双页', icon: 'BookOpen' },
-] as const;

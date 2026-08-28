@@ -16,6 +16,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { FontPicker } from '@/components/font-picker';
+import {
+  clampFontSize,
+  healStoredFontFamily,
+  isFontFamilyAvailable,
+  loadReaderPrefs,
+  resolveFontFamily,
+  saveReaderPrefs,
+  type ReaderPrefs,
+} from '@/lib/prefs';
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -29,29 +39,36 @@ export function SettingsPage() {
       .catch(() => {});
   }, []);
 
-  const [fontSize, setFontSize] = React.useState<number>(() => {
-    try {
-      const raw = localStorage.getItem('sun-reader-settings');
-      return raw ? JSON.parse(raw).fontSize ?? 21 : 21;
-    } catch {
-      return 21;
-    }
-  });
-
-  const changeFontSize = (delta: number) => {
-    setFontSize((s) => {
-      const next = Math.max(14, Math.min(32, s + delta));
-      try {
-        localStorage.setItem(
-          'sun-reader-settings',
-          JSON.stringify({ fontSize: next })
-        );
-      } catch {
-        /* ignore */
-      }
+  // 阅读偏好：与阅读页共用 lib/prefs（整对象保存，不互相覆盖字段）
+  const [prefs, setPrefsState] = React.useState<ReaderPrefs>(loadReaderPrefs);
+  const updatePrefs = (patch: Partial<ReaderPrefs>) =>
+    setPrefsState((p) => {
+      const next = { ...p, ...patch };
+      saveReaderPrefs(next);
       return next;
     });
-  };
+
+  // 字体名失效自愈：旧存档名命中不了字体时换成能命中的别名（与阅读页一致）
+  React.useEffect(() => {
+    const name = prefs.fontFamily;
+    if (isFontFamilyAvailable(name)) return;
+    let alive = true;
+    healStoredFontFamily(name).then((fixed) => {
+      if (!alive || !fixed) return;
+      setPrefsState((p) => {
+        if (p.fontFamily !== name) return p;
+        const next = { ...p, fontFamily: fixed };
+        saveReaderPrefs(next);
+        return next;
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [prefs.fontFamily]);
+
+  const changeFontSize = (delta: number) =>
+    updatePrefs({ fontSize: clampFontSize(prefs.fontSize + delta) });
 
   return (
     <div className="p-8 max-w-2xl">
@@ -76,7 +93,6 @@ export function SettingsPage() {
                 <SelectContent>
                   <SelectItem value="light">浅色</SelectItem>
                   <SelectItem value="dark">深色</SelectItem>
-                  <SelectItem value="sepia">Sepia</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -97,21 +113,32 @@ export function SettingsPage() {
                   variant="outline"
                   size="icon"
                   onClick={() => changeFontSize(-2)}
-                  disabled={fontSize <= 14}
+                  disabled={prefs.fontSize <= 14}
                 >
                   -
                 </Button>
-                <span className="w-12 text-center text-sm tabular-nums">{fontSize}px</span>
+                <span className="w-12 text-center text-sm tabular-nums">{prefs.fontSize}px</span>
                 <Button
                   variant="outline"
                   size="icon"
                   onClick={() => changeFontSize(2)}
-                  disabled={fontSize >= 32}
+                  disabled={prefs.fontSize >= 32}
                 >
                   +
                 </Button>
                 <span className="text-xs text-muted-foreground">范围 14 - 32</span>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>正文字体</Label>
+              <FontPicker value={prefs.fontFamily} onChange={(v) => updatePrefs({ fontFamily: v })} />
+              <p
+                className="text-xs text-muted-foreground border border-border rounded-md px-3 py-2"
+                style={{ fontFamily: resolveFontFamily(prefs.fontFamily) }}
+              >
+                预览：永和九年，岁在癸丑。Sun Reader 0123456789
+              </p>
             </div>
           </CardContent>
         </Card>

@@ -1,60 +1,135 @@
 /**
- * DualPageView - 双页阅读模式
- * 设计稿 .backup/dual-page.html：书页式左右两栏、页码、上一页/下一页导航
- * 阅读方式：双栏跨页左右翻（CSS 多列分页），铺满可用空间；窗口缩放时自动重排，不出滚动条。
+ * DualPageView - 双页阅读视图（唯一阅读模式）
+ *
+ * 全屏书页式左右两栏（CSS 多列分页），无顶栏/底栏/进度条：
+ * - 阅读区四周留白，书面底色（--reader-page）与 app 背景区分；
+ * - 底部悬浮 dock 工具栏（闲置自动隐藏）承载：退出阅读页面、翻页、字号±、
+ *   主题循环、搜索、书签，以及 目录 / 书签列表 / 我的批注 三个弹窗入口；
+ * - 左右边缘点击热区翻页，窗口缩放时自动重排并保持阅读位置。
  */
 
 import * as React from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  BookMarked,
+  Bookmark,
+  BookmarkCheck,
+  ChevronLeft,
+  ChevronRight,
+  ListTree,
+  Minus,
+  Moon,
+  Plus as PlusIcon,
+  Search,
+  Shrink,
+  StickyNote,
+} from 'lucide-react';
+import { useTheme } from '@/components/theme-provider';
+import { THEMES, THEME_LABELS } from '@/lib/constants';
+import { cn } from '@/lib/utils';
 import { useColumnPagination, type PagerHandle } from '@/hooks/useColumnPagination';
 
 export interface DualPageViewProps {
-  paragraphs: string[];
-  /** 正文渲染器（复用字号/行高等设置） */
-  renderParagraphs: (paras: string[], startIdx: number) => React.ReactNode;
+  /** 正文内容节点（TXT 文本块 / EPUB 原书渲染均由 ReaderPage 组装） */
+  content: React.ReactNode;
+  /** content 容器 id（EPUB 作用域化 CSS 以 #book-flow 为前缀） */
+  contentId?: string;
   articleStyle: React.CSSProperties;
-  /** 影响排版的依赖（段落引用、字号、行高），变化时重新分页 */
+  /** 影响排版的依赖（内容块引用、字号、行高），变化时重新分页 */
   layoutDeps: React.DependencyList;
   /** 进入时的阅读进度百分比 */
   initialPercent?: number;
+  /** 进入时的正文锚点（优先于百分比，精确恢复位置） */
+  initialAnchor?: { index: number; offset: number } | null;
   onPageChange?: (page: number, total: number) => void;
+  // ---- dock 栏交互（均由 ReaderPage 提供）----
+  /** 退出阅读页面（返回书库） */
   onExit: () => void;
+  onIncreaseFont: () => void;
+  onDecreaseFont: () => void;
+  onToggleBookmark: () => void;
+  isBookmarked: boolean;
+  onOpenSearch: () => void;
+  onOpenToc: () => void;
+  onOpenBookmarks: () => void;
+  onOpenNotes: () => void;
+  /** 正文选区松开（划线/批注入口，由 ReaderPage 判定选区有效性） */
+  onArticleMouseUp?: (e: React.MouseEvent) => void;
+  /** 正文单击（点击划线/批注高亮处弹出批注，由 ReaderPage 反查命中） */
+  onContentClick?: (e: React.MouseEvent) => void;
 }
 
 export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
   function DualPageView(
-    { paragraphs, renderParagraphs, articleStyle, layoutDeps, initialPercent, onPageChange, onExit },
+    {
+      content,
+      contentId,
+      articleStyle,
+      layoutDeps,
+      initialPercent,
+      initialAnchor,
+      onPageChange,
+      onExit,
+      onIncreaseFont,
+      onDecreaseFont,
+      onToggleBookmark,
+      isBookmarked,
+      onOpenSearch,
+      onOpenToc,
+      onOpenBookmarks,
+      onOpenNotes,
+      onArticleMouseUp,
+      onContentClick,
+    },
     ref
   ) {
-    const { viewportRef, contentRef, page, total, next, prev } = useColumnPagination({
-      columns: 2,
-      deps: layoutDeps,
-      initialPercent,
-      onPageChange,
-    });
+    const { theme, setTheme } = useTheme();
+    const [dockVisible, setDockVisible] = React.useState(true);
+    const hideTimer = React.useRef<number | null>(null);
 
-    // 暴露给父组件的键盘路由
-    React.useImperativeHandle(ref, () => ({ next, prev }), [next, prev]);
+    const { viewportRef, contentRef, page, total, next, prev, goToElement, goToTextOffset, goToPercent, getAnchor } =
+      useColumnPagination({
+        columns: 2,
+        deps: layoutDeps,
+        initialPercent,
+        initialAnchor,
+        onPageChange,
+      });
 
+    // 暴露给父组件：键盘路由（next/prev）+ 弹窗跳转（goToElement/goToTextOffset/goToPercent）
+    React.useImperativeHandle(
+      ref,
+      () => ({ next, prev, goToElement, goToTextOffset, goToPercent, getAnchor }),
+      [next, prev, goToElement, goToTextOffset, goToPercent, getAnchor]
+    );
+
+    const poke = React.useCallback(() => {
+      setDockVisible(true);
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+      hideTimer.current = window.setTimeout(() => setDockVisible(false), 2600);
+    }, []);
+
+    React.useEffect(() => {
+      poke();
+      return () => {
+        if (hideTimer.current) window.clearTimeout(hideTimer.current);
+      };
+    }, [poke]);
+
+    // 进度文字（页面中下方）：跨页 page/total 换算成页码区间与百分比
     const totalPages = total * 2; // 每个跨页约两页（最后一页可能为半页）
     const pageLabel = `${Math.min(page * 2 + 1, totalPages)} - ${Math.min(page * 2 + 2, totalPages)}`;
+    const pct = total > 0 ? ((page + 1) / total) * 100 : 0;
 
     return (
-      <div className="fixed inset-0 z-[1000] bg-background flex flex-col">
-        {/* 顶栏：返回按钮（退出双页模式） */}
-        <header className="flex items-center px-3 h-10 shrink-0">
-          <button
-            onClick={onExit}
-            title="退出双页模式 (Esc)"
-            className="w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-        </header>
-
-        {/* 书页：铺满剩余空间 */}
-        <main className="flex-1 min-h-0 overflow-hidden p-3 md:p-5">
-          <div className="w-full h-full rounded-xl border border-border bg-card shadow-xl p-6 md:p-10">
+      <div
+        className="fixed inset-0 z-[1000] bg-background flex flex-col"
+        onMouseMove={poke}
+        onClick={poke}
+        onMouseUp={onArticleMouseUp}
+      >
+        {/* 书页：四周留出呼吸边距（热区空间），底色与 app 背景区分 */}
+        <main className="flex-1 min-h-0 overflow-hidden p-6 md:p-10">
+          <div className="reader-page-surface w-full h-full rounded-xl border border-border shadow-xl p-6 md:p-10">
             <div ref={viewportRef} className="relative w-full h-full overflow-hidden">
               {/* 中缝装饰线 */}
               <div
@@ -64,10 +139,12 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
 
               <div
                 ref={contentRef}
+                id={contentId}
                 className="classic-text h-full"
                 style={{ ...articleStyle, columnFill: 'auto', willChange: 'transform' }}
+                onClick={onContentClick}
               >
-                {renderParagraphs(paragraphs, 0)}
+                {content}
               </div>
             </div>
           </div>
@@ -77,45 +154,120 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
         <button
           aria-label="上一页"
           title="上一页"
-          className="absolute left-0 top-12 bottom-14 w-14 group flex items-center justify-start"
-          onClick={prev}
+          className="absolute left-0 top-0 bottom-0 w-16 group flex items-center justify-start"
+          onClick={(e) => {
+            e.stopPropagation();
+            prev();
+          }}
         >
           <ChevronLeft className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         </button>
         <button
           aria-label="下一页"
           title="下一页"
-          className="absolute right-0 top-12 bottom-14 w-14 group flex items-center justify-end"
-          onClick={next}
+          className="absolute right-0 top-0 bottom-0 w-16 group flex items-center justify-end"
+          onClick={(e) => {
+            e.stopPropagation();
+            next();
+          }}
         >
           <ChevronRight className="h-7 w-7 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         </button>
 
-        {/* 底部导航 */}
-        <footer className="h-12 shrink-0 border-t border-border flex items-center justify-center gap-4">
-          <button
-            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-40 transition-colors"
-            onClick={prev}
-            disabled={page === 0}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            上一页
-          </button>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            第{' '}
-            <span className="text-foreground font-medium">{pageLabel}</span>{' '}
-            页 · 共约 {totalPages} 页
+        {/* 进度文字：常驻阅读页面中下方（页码区间 + 总页数 + 百分比，无进度条） */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none select-none">
+          <span className="text-xs text-muted-foreground tabular-nums opacity-80">
+            第 {pageLabel} 页 · 共约 {totalPages} 页 · {Math.round(pct)}%
           </span>
-          <button
-            className="flex items-center gap-1 px-3 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-40 transition-colors"
-            onClick={next}
-            disabled={page >= total - 1}
-          >
-            下一页
+        </div>
+
+        {/* 底部悬浮 dock 工具栏（闲置自动隐藏） */}
+        <div
+          data-no-annotation
+          className={cn(
+            'absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-0.5 rounded-full border border-border bg-popover text-popover-foreground shadow-xl px-2 py-1.5 transition-all duration-300',
+            dockVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+          )}
+        >
+          <ToolButton title="退出阅读页面" onClick={onExit}>
+            <Shrink className="h-4 w-4" />
+          </ToolButton>
+          <span className="w-px h-5 bg-border mx-1" />
+          <ToolButton title="上一页" onClick={prev} disabled={page === 0}>
+            <ChevronLeft className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton title="下一页" onClick={next} disabled={page >= total - 1}>
             <ChevronRight className="h-4 w-4" />
-          </button>
-        </footer>
+          </ToolButton>
+          <span className="w-px h-5 bg-border mx-1" />
+          <ToolButton title="减小字号" onClick={onDecreaseFont}>
+            <Minus className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton title="增大字号" onClick={onIncreaseFont}>
+            <PlusIcon className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton
+            title={`主题：${THEME_LABELS[theme]}（点击切换）`}
+            onClick={() => setTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length])}
+          >
+            <Moon className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton title="搜索正文" onClick={onOpenSearch}>
+            <Search className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton
+            title={isBookmarked ? '移除此处书签' : '在此处添加书签'}
+            onClick={onToggleBookmark}
+            active={isBookmarked}
+          >
+            {isBookmarked ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+          </ToolButton>
+          <span className="w-px h-5 bg-border mx-1" />
+          <ToolButton title="目录" onClick={onOpenToc}>
+            <ListTree className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton title="书签列表" onClick={onOpenBookmarks}>
+            <BookMarked className="h-4 w-4" />
+          </ToolButton>
+          <ToolButton title="我的批注" onClick={onOpenNotes}>
+            <StickyNote className="h-4 w-4" />
+          </ToolButton>
+        </div>
       </div>
     );
   }
 );
+
+function ToolButton({
+  children,
+  title,
+  onClick,
+  active,
+  disabled,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      title={title}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className={cn(
+        'w-9 h-9 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 disabled:pointer-events-none',
+        active
+          ? 'text-primary'
+          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+      )}
+    >
+      {children}
+    </button>
+  );
+}

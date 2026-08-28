@@ -33,14 +33,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 读取书籍内容
     readContent: (bookId) => ipcRenderer.invoke('read-book-content', bookId),
 
-    // 更新阅读进度
-    updateProgress: (bookId, progress, currentPage) =>
-      ipcRenderer.invoke('update-progress', { bookId, progress, currentPage })
+    // 更新阅读进度（anchor 为正文锚点：改字号/重开后精确恢复位置）
+    updateProgress: (bookId, progress, currentPage, anchor) =>
+      ipcRenderer.invoke('update-progress', { bookId, progress, currentPage, anchor })
   },
 
   // 对话框
   dialog: {
     showOpen: (options) => ipcRenderer.invoke('show-open-dialog', options)
+  },
+
+  // 系统（字体枚举等）
+  system: {
+    listFonts: () => ipcRenderer.invoke('list-system-fonts')
   },
 
   // 书签
@@ -57,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 批注
   notes: {
     add: (payload) => ipcRenderer.invoke('add-note', payload),
+    update: (payload) => ipcRenderer.invoke('update-note', payload),
     remove: (payload) => ipcRenderer.invoke('remove-note', payload)
   },
 

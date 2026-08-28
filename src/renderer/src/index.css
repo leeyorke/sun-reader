@@ -24,6 +24,8 @@
     --input: 40 10% 80%;
     --ring: 14 88% 55%;
     --radius: 0.5rem;
+    /* 阅读页书面底色：比 app 背景（--background）更亮/更深，区分阅读与非阅读区域 */
+    --reader-page: 0 0% 100%;
   }
 
   .dark {
@@ -46,28 +48,7 @@
     --border: 0 0% 20%;
     --input: 0 0% 20%;
     --ring: 14 88% 55%;
-  }
-
-  .sepia {
-    --background: 40 30% 88%;
-    --foreground: 30 30% 15%;
-    --card: 40 25% 92%;
-    --card-foreground: 30 30% 15%;
-    --popover: 40 25% 95%;
-    --popover-foreground: 30 30% 15%;
-    --primary: 25 70% 40%;
-    --primary-foreground: 40 25% 95%;
-    --secondary: 40 20% 85%;
-    --secondary-foreground: 30 30% 15%;
-    --muted: 40 20% 80%;
-    --muted-foreground: 30 20% 40%;
-    --accent: 25 70% 40%;
-    --accent-foreground: 40 25% 95%;
-    --destructive: 0 60% 50%;
-    --destructive-foreground: 40 25% 95%;
-    --border: 40 15% 75%;
-    --input: 40 15% 75%;
-    --ring: 25 70% 40%;
+    --reader-page: 0 0% 16%;
   }
 }
 
@@ -94,6 +75,144 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* 阅读页书面（与 app 背景区分） */
+  .reader-page-surface {
+    background-color: hsl(var(--reader-page));
+  }
+}
+
+/* 章节标题：加粗居中，且总是从新的一页（新列）开始 */
+.reader-chapter-title {
+  break-before: column;
+  font-weight: 700;
+  font-size: 1.6em;
+  line-height: 1.4;
+  text-align: center;
+  letter-spacing: 0.08em;
+  margin: 0 0 2em;
+}
+
+/* 正文流开头的第一个标题不再强制分页（避免出现空白首页） */
+.reader-chapter-title:first-child {
+  break-before: auto;
+}
+
+/* 文内小标题（h2-h6）：加粗、按级别缩放字号（style 内联），不强制分页 */
+.reader-heading {
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 1.6em 0 0.7em;
+}
+
+/* 代码块：等宽字体、保留换行与缩进、浅底描边；长行自动折行适配双栏 */
+.reader-code-block {
+  font-family: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 0.82em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  background: hsl(var(--muted) / 0.5);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 0.75em 1em;
+  margin: 0 0 1.25em;
+}
+
+/* ========================================
+   EPUB 原书渲染（ReaderPage EPUB 路径）
+   ======================================== */
+
+/* 每章从新的一页开始（首元素豁免，封面页本身也是首元素） */
+.epub-chapter {
+  break-before: column;
+}
+#book-flow > .epub-chapter:first-child {
+  break-before: auto;
+}
+
+/* 封面页：独占一页，图片按页面自适应居中 */
+.reader-cover-page {
+  break-before: auto;
+  break-after: column;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#book-flow .reader-cover-page img {
+  max-width: 100%;
+  max-height: 100% !important; /* 覆盖正文图片的列高收缩限制 */
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* 原书内容的兜底基线：书内 CSS 缺失时也不至于散架（会被书内规则覆盖） */
+#book-flow img,
+#book-flow svg,
+#book-flow video {
+  max-width: 100%;
+  height: auto;
+}
+/* 图放不下就整体移到下一页：图/图容器不可拆分，多列分页会在列底前断页，
+   而不是把图留在原处被裁掉；单图段落里的图改为块级居中（正常插图样式），
+   文本内联小图标不受影响 */
+#book-flow img,
+#book-flow svg,
+#book-flow picture,
+#book-flow figure {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+#book-flow p:has(> img:only-child),
+#book-flow div:has(> img:only-child),
+#book-flow p:has(> svg:only-child) {
+  break-inside: avoid;
+}
+#book-flow p:has(> img:only-child) > img,
+#book-flow div:has(> img:only-child) > img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+/* 宽/高防溢出：宽度收进列宽；高度按实测列高（--col-h，由翻页器量取）收缩并
+   留出图题/边距余量，保证图+图题整体能放进一列（点击图片可弹窗看全图） */
+#book-flow img,
+#book-flow svg {
+  max-width: 100% !important;
+  max-height: calc(var(--col-h, 70vh) - 4.5em) !important;
+}
+#book-flow img {
+  object-fit: contain;
+}
+#book-flow table {
+  max-width: 100% !important;
+}
+#book-flow td,
+#book-flow th {
+  max-width: 100% !important;
+}
+#book-flow a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  cursor: pointer;
+}
+#book-flow td,
+#book-flow th {
+  border: 1px solid hsl(var(--border));
+  padding: 0.25em 0.5em;
+}
+#book-flow blockquote {
+  margin: 1em 0;
+  padding: 0.25em 1em;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+#book-flow hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.5em 0;
 }
 
 /* Custom scrollbar for webkit browsers */
@@ -119,4 +238,20 @@
 ::selection {
   background: hsl(var(--primary) / 0.3);
   color: hsl(var(--primary-foreground));
+}
+
+/* 阅读页跳转定位：目标段落脉冲高亮 2s */
+.highlight-pulse {
+  animation: reader-pulse 2s ease;
+  border-radius: 4px;
+}
+
+@keyframes reader-pulse {
+  0%,
+  60% {
+    background-color: hsl(var(--primary) / 0.16);
+  }
+  100% {
+    background-color: transparent;
+  }
 }

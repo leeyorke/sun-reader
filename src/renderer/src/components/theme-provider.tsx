@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type Theme = 'dark' | 'light' | 'sepia';
+import type { Theme } from '@/lib/types';
 
 type ThemeProviderProps = {
   children: React.ReactNode;
@@ -26,20 +26,17 @@ export function ThemeProvider({
   storageKey = 'vite-ui-theme',
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
-  );
+  // 仅支持浅色/深色；旧存储的 'sepia' 等非法值回退到默认主题
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem(storageKey) as Theme | null;
+    return stored === 'light' || stored === 'dark' ? stored : defaultTheme;
+  });
 
   useEffect(() => {
     const root = window.document.documentElement;
 
-    root.classList.remove('light', 'dark', 'sepia');
-
-    if (theme === 'sepia') {
-      root.classList.add('sepia');
-    } else {
-      root.classList.add(theme);
-    }
+    root.classList.remove('light', 'dark');
+    root.classList.add(theme);
   }, [theme]);
 
   const value = {

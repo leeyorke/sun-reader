@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { parseEpub, extractCover } from '../../src/main/epub-parser.js';
+import { parseEpub, extractCover, openEpubReading } from '../../src/main/epub-parser.js';
 
 // ---------- fixture 构造 ----------
 
@@ -123,6 +123,72 @@ describe('parseEpub', () => {
     expect(r.chapters[0].title).toBe('');
     // XHTML 内部标题仍作为正文段落保留（h1 独立成段），只是不再充当章节名
     expect(r.chapters[0].paragraphs).toEqual(['内部标题', '正文。']);
+  });
+
+  it('openEpubReading 返回原始 XHTML 与 zip 完整路径（原书渲染用）', () => {
+    const opf = buildOpf({
+      meta: '<dc:title>测试之书</dc:title></dc:creator>',
+      manifest: `
+        <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+        <item id="c1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>`,
+      spine: `<itemref idref="c1"/>`,
+    });
+    const ncx = `<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+      <navPoint id="n1"><navLabel><text>第一章</text></navLabel><content src="text/ch1.xhtml"/></navPoint>
+    </navMap></ncx>`;
+    const file = makeEpub({
+      opfPath: 'OEBPS/content.opf',
+      opf,
+      files: {
+        'OEBPS/toc.ncx': ncx,
+        'OEBPS/text/ch1.xhtml': chapterXhtml({ title: '第一章', body: '<p>原书内容。</p>' }),
+      },
+    });
+
+    const r = openEpubReading(file);
+    expect(r.ok).toBe(true);
+    expect(r.meta.title).toBe('测试之书');
+    expect(r.chapters).toHaveLength(1);
+    expect(r.chapters[0].title).toBe('第一章');
+    // href 为 zip 完整路径；xhtml 保留原始标签（不剥为纯文本）
+    expect(r.chapters[0].href).toBe('OEBPS/text/ch1.xhtml');
+    expect(r.chapters[0].xhtml).toContain('<p>原书内容。</p>');
+  });
+
+  it('blocks 保留结构：文内标题带级别、pre 保留换行缩进、[toc] 占位符被剔除', () => {
+    const opf = buildOpf({
+      manifest: `<item id="c1" href="x.xhtml" media-type="application/xhtml+xml"/>`,
+      spine: `<itemref idref="c1"/>`,
+    });
+    const body = [
+      '<h2>小节标题</h2>',
+      '<p>正文段落。</p>',
+      '[toc]',
+      '<pre><code>const a = 1;</code></pre>',
+      '<pre>if (x) {\n  doThing();\n}</pre>',
+      '<h3>三级标题</h3>',
+      '<p>结尾。</p>',
+    ].join('');
+    const file = makeEpub({
+      opf,
+      files: { 'OEBPS/x.xhtml': chapterXhtml({ title: '内部标题', body }) },
+    });
+
+    const r = parseEpub(file);
+    expect(r.ok).toBe(true);
+    const blocks = r.chapters[0].blocks;
+    // h1（chapterXhtml 内部标题）+ h2 + p + pre + pre + h3 + p，[toc] 被剔除
+    expect(blocks).toEqual([
+      { kind: 'h1', text: '内部标题' },
+      { kind: 'h2', text: '小节标题' },
+      { kind: 'p', text: '正文段落。' },
+      { kind: 'pre', text: 'const a = 1;' },
+      { kind: 'pre', text: 'if (x) {\n  doThing();\n}' },
+      { kind: 'h3', text: '三级标题' },
+      { kind: 'p', text: '结尾。' },
+    ]);
+    // paragraphs 是纯文本镜像
+    expect(r.chapters[0].paragraphs).toEqual(blocks.map((b) => b.text));
   });
 
   it('章节标题只来自目录文档(NCX)，忽略 XHTML 内部标题', () => {

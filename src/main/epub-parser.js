@@ -31,7 +31,15 @@ function attr(tag, name) {
   return m ? m[1] : null;
 }
 
-/** XHTML → { title, paragraphs } */
+/**
+ * XHTML → { title, blocks: [{kind, text}], paragraphs }
+ *
+ * blocks 是保留结构的块序列，kind:
+ *   'p'        普通段落（空白已折叠）
+ *   'h1'..'h6' 文内标题（章节标题仍由目录文档决定，这里只是正文小标题）
+ *   'pre'      代码块（保留换行与缩进）
+ * paragraphs 是 blocks 的纯文本镜像，供兼容旧消费方与测试。
+ */
 function xhtmlToChapter(raw, zip, basePath) {
   let html = raw;
 
@@ -49,24 +57,71 @@ function xhtmlToChapter(raw, zip, basePath) {
     if (h) title = decodeEntities(h[1].replace(/<[^>]+>/g, '')).trim();
   }
 
-  // 块级元素闭合处断行；<br> 断行；其余标签剔除
+  // 1) 先摘出 <pre> 代码块为占位符：保留换行与缩进，只剥内部标签 + 实体解码
+  const preBlocks = [];
+  html = html.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_, inner) => {
+    const text = decodeEntities(inner.replace(/<[^>]+>/g, ''))
+      .replace(/\r\n?/g, '\n')
+      .replace(/[ \t]+\n/g, '\n') // 去行尾空白
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\n+|\n+$/g, '');
+    if (!text) return '\n';
+    preBlocks.push({ kind: 'pre', text });
+    return `\n\u0000PRE${preBlocks.length - 1}\u0000\n`;
+  });
+
+  // 2) 标题 h1-h6 各自成块（记录级别），用占位符保持文档顺序
+  const headingBlocks = [];
+  html = html.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, lvl, inner) => {
+    const text = decodeEntities(inner.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ''))
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return '\n';
+    headingBlocks.push({ kind: `h${lvl}`, text });
+    return `\n\u0000H${headingBlocks.length - 1}\u0000\n`;
+  });
+
+  // 3) 其余块级元素闭合处断行；<br> 断行；剩下的标签剔除
   html = html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|blockquote|tr|section|article)>/gi, '\n')
+    .replace(/<\/(p|div|li|blockquote|tr|section|article)>/gi, '\n')
     .replace(/<[^>]+>/g, '');
 
   html = decodeEntities(html);
 
-  const paragraphs = html
-    .split(/\r?\n/)
-    .map((s) => s.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+  // 4) 按行还原块序列（占位符换回 pre/标题块，保持原始顺序）
+  const blocks = [];
+  for (const line of html.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+
+    let m;
+    if ((m = trimmedLine.match(/^\u0000H(\d+)\u0000$/))) {
+      const b = headingBlocks[Number(m[1])];
+      if (b) blocks.push(b);
+      continue;
+    }
+    if ((m = trimmedLine.match(/^\u0000PRE(\d+)\u0000$/))) {
+      const b = preBlocks[Number(m[1])];
+      if (b) blocks.push(b);
+      continue;
+    }
+
+    const text = trimmedLine.replace(/\s+/g, ' ');
+    if (!text) continue;
+    // Markdown 转制书的目录占位符残留
+    if (/^\[toc\]$/i.test(text)) continue;
+    blocks.push({ kind: 'p', text });
+  }
+
+  // 纯文本镜像（兼容旧消费方与测试）
+  const paragraphs = blocks.map((b) => b.text);
 
   // 相对路径引用的图片资源不处理（v1 纯文本）；但保留接口便于扩展
   void zip;
   void basePath;
 
-  return { title, paragraphs };
+  return { title, blocks, paragraphs };
 }
 
 /**
@@ -193,7 +248,7 @@ function buildTocTitles(readText, opfDir, items, spineTocId) {
 /**
  * 解析 EPUB
  * 章节标题只取自目录文档（NCX/Nav）；不在目录中的章节 title 为空串，不做合成。
- * @returns {{ ok: true, meta: {title,creator}, chapters: Array<{title: string, paragraphs: string[]}> }
+ * @returns {{ ok: true, meta: {title,creator}, chapters: Array<{title: string, blocks: Array<{kind: string, text: string}>, paragraphs: string[]}> }
  *          | { ok: false, error: string }}
  */
 function parseEpub(filePath) {
@@ -235,9 +290,10 @@ function parseEpub(filePath) {
     const raw = readText(fullPath);
     if (!raw) continue;
 
-    const { paragraphs } = xhtmlToChapter(raw, zip, fullPath);
+    const { blocks, paragraphs } = xhtmlToChapter(raw, zip, fullPath);
     chapters.push({
       title: tocTitles.get(fullPath) || '',
+      blocks,
       paragraphs,
     });
   }
@@ -300,7 +356,98 @@ function extractCover(filePath) {
   return { ok: true, data: entry.getData(), extension: `.${ext}` };
 }
 
-module.exports = { parseEpub, extractCover };
+/**
+ * 阅读模式：按 spine 返回每章原始 XHTML（不做文本剥离），
+ * 供渲染端配合原书 CSS 渲染。zip 实例按文件路径缓存，资源协议(bookres)共用。
+ */
+const zipCache = new Map(); // filePath -> AdmZip
+
+function getEpubZip(filePath) {
+  let zip = zipCache.get(filePath);
+  if (!zip) {
+    zip = new AdmZip(filePath);
+    zipCache.set(filePath, zip);
+  }
+  return zip;
+}
+
+/** 读取 zip 内资源（资源协议 bookres 用）；找不到返回 null */
+function readEpubResource(filePath, relPath) {
+  try {
+    const zip = getEpubZip(filePath);
+    const entry = zip.getEntry(relPath) || zip.getEntry(encodeURI(relPath));
+    return entry ? entry.getData() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 释放某本书的 zip 缓存（删除书籍时调用） */
+function dropEpubCache(filePath) {
+  zipCache.delete(filePath);
+}
+
+/**
+ * 打开 EPUB 供阅读：元数据 + spine 原始 XHTML（标题来自目录文档，同 parseEpub 规则）
+ * @returns {{ ok: true, meta: {title,creator}, chapters: Array<{title: string, href: string, xhtml: string}> }
+ *          | { ok: false, error: string }}
+ */
+function openEpubReading(filePath) {
+  const pkg = loadPackage(filePath);
+  if (!pkg.ok) return pkg;
+  const { readText, opf, opfDir } = pkg;
+
+  const metaTitle = (opf.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i) || [])[1];
+  const metaCreator = (opf.match(/<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i) || [])[1];
+
+  const manifest = new Map();
+  for (const item of readManifest(opf)) {
+    if (item.id && item.href) manifest.set(item.id, { href: item.href, mediaType: item.mediaType });
+  }
+
+  const spineIds = [];
+  const itemrefRe = /<itemref\b[^>]*idref\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let m;
+  while ((m = itemrefRe.exec(opf)) !== null) spineIds.push(m[1]);
+
+  const spineTag = (opf.match(/<spine\b[^>]*>/i) || [])[0] || '';
+  const spineTocId = attr(spineTag, 'toc');
+  const tocTitles = buildTocTitles(readText, opfDir, readManifest(opf), spineTocId);
+
+  const chapters = [];
+  for (const id of spineIds) {
+    const item = manifest.get(id);
+    if (!item) continue;
+    if (item.mediaType && !/xhtml|html/i.test(item.mediaType)) continue; // 跳过图片等资源页
+
+    const href = decodeURIComponent(item.href);
+    const fullPath = resolveZipPath(opfDir, href);
+    const xhtml = readText(fullPath);
+    if (xhtml == null) continue;
+
+    chapters.push({
+      title: tocTitles.get(fullPath) || '',
+      // href 返回 zip 根路径（书内链接/资源都以它为解析基准）
+      href: fullPath,
+      xhtml,
+    });
+  }
+
+  if (chapters.length === 0) {
+    return { ok: false, error: '解析成功但没有可读内容（可能受 DRM 保护或结构异常）' };
+  }
+
+  return {
+    ok: true,
+    meta: {
+      title: metaTitle ? decodeEntities(metaTitle).trim() : '',
+      creator: metaCreator ? decodeEntities(metaCreator).trim() : '',
+    },
+    chapters,
+  };
+}
+
+module.exports = { parseEpub, extractCover, openEpubReading, readEpubResource, dropEpubCache, resolveZipPath };
 
 // CLI 调试入口
 if (require.main === module) {
@@ -318,8 +465,8 @@ if (require.main === module) {
   console.log(`元数据: 《${result.meta.title}》 ${result.meta.creator}`);
   console.log(`章节数: ${result.chapters.length}，耗时 ${Date.now() - t0}ms`);
   for (const ch of result.chapters) {
-    const preview = ch.paragraphs[0]?.slice(0, 40) ?? '(空章节)';
-    console.log(`  - ${ch.title} (${ch.paragraphs.length} 段) ${preview}...`);
+    const preview = ch.blocks[0]?.text?.slice(0, 40) ?? '(空章节)';
+    console.log(`  - ${ch.title} (${ch.blocks.length} 块) ${preview}...`);
   }
   const cover = extractCover(path);
   console.log(

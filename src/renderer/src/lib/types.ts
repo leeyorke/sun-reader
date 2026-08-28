@@ -25,6 +25,14 @@ export interface Book {
   tags: string[];
   notes: Note[];
   bookmarks: Bookmark[];
+  /** 正文锚点（data-anchor 索引 + 元素内字符偏移），改字号/重开时精确恢复位置 */
+  readingAnchor?: ReadingAnchor;
+}
+
+/** 正文位置锚点：TXT=段落索引；EPUB=章节索引 */
+export interface ReadingAnchor {
+  index: number;
+  offset: number;
 }
 
 export interface Note {
@@ -32,8 +40,17 @@ export interface Note {
   bookId: string;
   content: string;
   quote: string;
+  /** 保存时的阅读进度百分比（跳转兜底用） */
   position: number;
   color: string;
+  /** 'underline' = 纯划线；'note' = 带想法的批注（旧数据缺省视为 'note'） */
+  type?: 'note' | 'underline';
+  /** 划线定位（TXT）：全局段落索引 + 段内字符区间 [start, end) */
+  pidx?: number;
+  /** 划线定位（EPUB 原书渲染）：章节索引 + 整章纯文本上的字符区间 [start, end) */
+  chidx?: number;
+  start?: number;
+  end?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,7 +67,7 @@ export interface Bookmark {
 // 设置相关类型
 // ========================================
 
-export type Theme = 'light' | 'dark' | 'sepia';
+export type Theme = 'light' | 'dark';
 
 export interface ReaderSettings {
   theme: Theme;
@@ -106,10 +123,19 @@ export interface TocItem {
 }
 
 // ========================================
-// 视图模式类型
+// 阅读内容块（分页正文的最小单元）
 // ========================================
 
-export type ViewMode = 'standard' | 'immersive' | 'dual';
+export type ReaderBlockKind = 'title' | 'heading' | 'para' | 'pre';
+
+export interface ReaderBlock {
+  kind: ReaderBlockKind;
+  text: string;
+  /** heading 块的标题级别（2-6，对应 h2-h6） */
+  level?: number;
+  /** 段落/小标题/代码块的全局索引（title 块无；划线/跳转/搜索都以此为锚点） */
+  pidx?: number;
+}
 
 // ========================================
 // Electron API 类型
@@ -147,12 +173,33 @@ export interface ElectronAPI {
       format?: string;
       error?: string;
       meta?: { title: string; creator: string };
-      chapters?: Array<{ title: string; paragraphs: string[] }>;
+      chapters?: Array<{
+        title: string;
+        /** EPUB：相对 OPF 目录的 spine 路径（书内链接解析基准） */
+        href?: string;
+        /** EPUB：spine 原始 XHTML（渲染端净化后配合原书 CSS 渲染） */
+        xhtml?: string;
+      }>;
     }>;
-    updateProgress: (bookId: string, progress: number, currentPage: number) => Promise<{ success: boolean }>;
+    updateProgress: (
+      bookId: string,
+      progress: number,
+      currentPage: number,
+      anchor?: { index: number; offset: number }
+    ) => Promise<{ success: boolean }>;
   };
   dialog: {
     showOpen: (options: OpenDialogOptions) => Promise<OpenDialogReturnValue>;
+  };
+  system: {
+    /** 主进程枚举系统字体（Windows 读字体文件 name 表 / Linux fc-list / macOS 字体目录） */
+    listFonts: () => Promise<{
+      success: boolean;
+      fonts: string[];
+      /** 别名组：键 = 组内首个名字，值 = 同一字体文件的其余家族名（如中英文双名） */
+      aliases?: Record<string, string[]>;
+      error?: string;
+    }>;
   };
   bookmarks: {
     add: (payload: { bookId: string; position: number; chapter?: string }) => Promise<{ success: boolean; bookmark?: Bookmark; error?: string }>;
@@ -163,15 +210,31 @@ export interface ElectronAPI {
   };
   notes: {
     add: (payload: { bookId: string; note: Partial<Note> }) => Promise<{ success: boolean; note?: Note; error?: string }>;
+    update: (payload: { bookId: string; noteId: string; patch: Partial<Pick<Note, 'content' | 'color'>> }) => Promise<{ success: boolean; note?: Note; error?: string }>;
     remove: (payload: { bookId: string; noteId: string }) => Promise<{ success: boolean; error?: string }>;
   };
   on: (channel: 'books-imported', callback: (books: Book[]) => void) => void;
   off: (channel: string, callback: (...args: any[]) => void) => void;
 }
 
+// ========================================
+// 本地字体访问（Chromium Local Font Access API）
+// ========================================
+
+export interface FontData {
+  family: string;
+  fullName: string;
+  postscriptName: string;
+  style: string;
+}
+
 declare global {
   interface Window {
     electronAPI: ElectronAPI;
+  }
+  interface Navigator {
+    /** Electron(Chromium) 下可用；未授权/不可用时为 undefined */
+    queryLocalFonts?: () => Promise<FontData[]>;
   }
 }
 
