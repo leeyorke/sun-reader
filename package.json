@@ -26,7 +26,7 @@
     "pdf",
     "desktop"
   ],
-  "author": "Sun Reader Team",
+  "author": "leeyorke",
   "license": "MIT",
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
@@ -96,7 +96,15 @@
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "nsis": {
+        "oneClick": false,
+        "allowToChangeInstallationDirectory": true,
+        "createDesktopShortcut": true,
+        "createStartMenuShortcut": true,
+        "shortcutName": "Sun Reader",
+        "publisher": "leeyorke"
+      }
     },
     "mac": {
       "target": [
