@@ -47,6 +47,7 @@ import {
   rewriteCssUrls,
   scopeCss,
   stripFontFamily,
+  stripOverflowHidden,
   textOffsetFromPoint,
 } from '@/lib/epub';
 import {
@@ -308,7 +309,9 @@ export function ReaderPage() {
               if (r.ok) {
                 sharedCss.push(
                   scopeCss(
-                    stripFontFamily(rewriteCssUrls(await r.text(), cssDir, bookId)),
+                    stripOverflowHidden(
+                      stripFontFamily(rewriteCssUrls(await r.text(), cssDir, bookId))
+                    ),
                     SHARED_SCOPE
                   )
                 );
@@ -319,7 +322,10 @@ export function ReaderPage() {
           }
 
           const inlineCss = prepared.inlineCss.map((css) =>
-            scopeCss(stripFontFamily(rewriteCssUrls(css, chapterDir, bookId)), chapterScope)
+            scopeCss(
+              stripOverflowHidden(stripFontFamily(rewriteCssUrls(css, chapterDir, bookId))),
+              chapterScope
+            )
           );
 
           chapters[i] = {
@@ -450,7 +456,7 @@ export function ReaderPage() {
     (pct: number) => {
       if (!bookId || !window.electronAPI) return;
       // 页数以**实测分页**为准（一列 = 一页），与阅读页底部「共 n 页」同源。
-      // 导入时那个 字数/1000 的估算只在首次打开前顶着（DDIA 估 507 页、实测 127 页，
+      // 导入时那个 字数/1000 的估算只在首次打开前顶着（DDIA 估 507 页、实测 ≈850 页，
       // 书库显示「剩余 499 页」而阅读页显示「共 128 页」就是这两套口径打起来了）。
       const info = dualPagerRef.current?.getPageInfo();
       const fallbackTotal = book?.totalPages || Math.ceil(totalChars / 1000) || 1;
@@ -462,19 +468,23 @@ export function ReaderPage() {
       // 附带正文锚点：改字号重排/重新打开时按内容位置精确恢复（而非按比例跳变）
       const anchor = dualPagerRef.current?.getAnchor() ?? undefined;
       window.electronAPI.books.updateProgress(bookId, Math.round(pct), currentPage, anchor, totalPages);
-      qc.setQueryData<Book[]>(BOOKS_QUERY_KEY, (old) =>
-        old?.map((b) =>
-          b.id === bookId
-            ? {
-                ...b,
-                readingProgress: Math.round(pct),
-                currentPage,
-                totalPages,
-                lastRead: new Date().toISOString(),
-              }
-            : b
-        )
-      );
+      // 两处缓存都要补齐：useBook 走 ['books', bookId] 独立缓存，若只 patch 列表缓存，
+      // 同一会话内「退出阅读 → 重新打开」会先命中旧缓存按旧进度定位（实测表现为
+      // 无论上次读到哪，重开永远停在同一个百分比位置），后台重新拉取到达时
+      // measure() 早已完成。readingAnchor 必须一起写，否则重开仍按百分比恢复。
+      const patch = (b: Book): Book =>
+        b.id === bookId
+          ? {
+              ...b,
+              readingProgress: Math.round(pct),
+              currentPage,
+              totalPages,
+              readingAnchor: anchor ?? undefined,
+              lastRead: new Date().toISOString(),
+            }
+          : b;
+      qc.setQueryData<Book[]>(BOOKS_QUERY_KEY, (old) => old?.map(patch));
+      qc.setQueryData<Book>([...BOOKS_QUERY_KEY, bookId], (old) => (old ? patch(old) : old));
     },
     [bookId, book?.totalPages, totalChars, qc]
   );

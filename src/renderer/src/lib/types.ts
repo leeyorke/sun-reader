@@ -25,11 +25,15 @@ export interface Book {
   tags: string[];
   notes: Note[];
   bookmarks: Bookmark[];
-  /** 正文锚点（data-anchor 索引 + 元素内字符偏移），改字号/重开时精确恢复位置 */
+  /** 正文锚点（data-anchor 索引 + 元素内比例位置），改字号/重开时精确恢复位置 */
   readingAnchor?: ReadingAnchor;
 }
 
-/** 正文位置锚点：TXT=段落索引；EPUB=章节索引 */
+/**
+ * 正文位置锚点：index = TXT 段落索引 / EPUB 章节索引；
+ * offset = 窗口起点在该元素内的列位置**比例** [0,1)，语义与实现见
+ * `hooks/useColumnPagination.ts` 的 ReadingAnchor 注释。
+ */
 export interface ReadingAnchor {
   index: number;
   offset: number;

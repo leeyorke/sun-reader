@@ -107,6 +107,23 @@ export function stripFontFamily(css: string): string {
   return css.replace(/font-family\s*:[^;{}]*;?/gi, '');
 }
 
+/**
+ * 把 CSS 文本里 overflow 声明中的 hidden 改写为 visible（auto/scroll 保留——代码块
+ * 依赖它们横向滚动）。
+ *
+ * 原因：Chromium 多列分页对 overflow 非 visible 的盒子不能正常分片——《数据密集型
+ * 应用系统设计》每章内容都包在 `.section{overflow:hidden}` 里，结果全书一章只排出一
+ * 列、装不下的内容全部竖向堆进最后一列被裁掉（实测 127 列 vs 修复后 1166 列，最深处
+ * 堆到 21000px）。hidden 在重排书（reflowable EPUB）里只是 calibre 的 clearfix 残留，
+ * 改成 visible 后列分片恢复正常，浮动最多在本列内越界（各章都强制新起一列，不会叠字）。
+ */
+export function stripOverflowHidden(css: string): string {
+  return css.replace(
+    /(^|[;{}\s])(overflow(?:-[xy])?\s*:\s*)([^;{}]*)/gi,
+    (m, lead, prop, value) => (/\bhidden\b/i.test(value) ? lead + prop + value.replace(/\bhidden\b/gi, 'visible') : m)
+  );
+}
+
 const STRIP_SELECTORS = 'script, style, link, meta, title, iframe, object, embed, form, input, button, select, textarea, noscript';
 
 /**
@@ -281,8 +298,9 @@ export function prepareChapterHtml(
     el.setAttribute('data-book-fragment', href.includes('#') ? href.split('#')[1] ?? '' : '');
   });
 
-  // 清掉所有 on* 事件属性与 javascript: href；并剥除元素 style 属性内的 font-family
-  //（书内联样式栈是压住用户字体的最后一条路径，CSS 文件与 <style> 已在上游剥离）
+  // 清掉所有 on* 事件属性与 javascript: href；并剥除元素 style 属性内的 font-family、
+  // 把 overflow:hidden 改为 visible（书内联样式是压住用户字体/阻碍列分片的最后一条路径，
+  // CSS 文件与 <style> 已在上游同样处理，见 stripOverflowHidden）
   body.querySelectorAll('*').forEach((el) => {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
@@ -292,8 +310,9 @@ export function prepareChapterHtml(
       }
     }
     const styleAttr = el.getAttribute('style');
-    if (styleAttr && /font-family/i.test(styleAttr)) {
-      const cleaned = styleAttr.replace(/font-family\s*:[^;]*;?/gi, '').trim();
+    if (styleAttr && (/font-family/i.test(styleAttr) || /overflow(-[xy])?\s*:/i.test(styleAttr))) {
+      let cleaned = styleAttr.replace(/font-family\s*:[^;]*;?/gi, '');
+      cleaned = stripOverflowHidden(cleaned).trim();
       if (cleaned) el.setAttribute('style', cleaned);
       else el.removeAttribute('style');
     }

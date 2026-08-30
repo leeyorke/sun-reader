@@ -40,7 +40,16 @@ export interface PageInfo {
   firstPage: number;
 }
 
-/** 正文锚点（与 ReaderPage 的 data-anchor 编号一致） */
+/**
+ * 正文锚点（与 ReaderPage 的 data-anchor 编号一致）。
+ *
+ * `offset` = 窗口起点落在该锚元素内的位置，取**占该元素列跨度的比例** [0,1)。
+ * 只记 index（offset 恒 0）时，任何一次重新量取都把画面拽回**锚元素起点**：EPUB 的
+ * 一个 spine 章可横跨几十列，于是「目录跳到第二章 → 一次 re-measure → 退回上一章的
+ * 参考文献页」（实测 col 66 → col 62），「退出重开」也只能落回章首而不是退出那一页。
+ * 用比例：同一排版下 round 后原样还原（幂等，不再漂移），改字号后按新的列跨度折算，
+ * 误差被限制在锚元素之内。旧数据（offset 恒 0 / 非 [0,1) 值）按 0 处理。
+ */
 export interface ReadingAnchor {
   index: number;
   offset: number;
@@ -56,6 +65,27 @@ const GAP = 72;
  */
 export function columnIndexAt(x: number, colW: number): number {
   return Math.max(0, Math.floor((x + 1) / (colW + GAP)));
+}
+
+/**
+ * 窗口起始列 → 锚点的 `offset` 比例分量。
+ * start/span = 锚元素的起始列与列跨度，winCol = 窗口起点所在列。
+ */
+export function anchorOffsetIn(start: number, span: number, winCol: number): number {
+  const s = Math.max(1, span);
+  const delta = Math.max(0, Math.min(s - 1, winCol - start));
+  return delta / s;
+}
+
+/**
+ * 锚点 → 目标列：起始列 + 比例 × 新排版下的列跨度。
+ * 与 anchorOffsetIn 互为逆运算（同一排版下 round 后精确还原，因此重复量取不会漂移）；
+ * 旧数据/脏值（offset 不在 (0,1) 内）退化为锚元素起点。
+ */
+export function anchorTargetCol(start: number, span: number, offset: number): number {
+  const s = Math.max(1, span);
+  const frac = Number.isFinite(offset) && offset > 0 && offset < 1 ? offset : 0;
+  return start + Math.min(s - 1, Math.round(frac * s));
 }
 
 /**
@@ -116,35 +146,61 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     ct.style.transform = `translateX(${-pageRef.current * metricsRef.current.step}px)`;
   }, []);
 
-  /** 锚点元素索引（data-anchor），返回其在多列中的起始列 */
-  const anchorColIndex = React.useCallback((i: number): number => {
+  /** 锚元素在多列中的位置：起始列 + 列跨度（跨度用于按比例还原窗口在元素内的位置） */
+  const anchorColSpan = React.useCallback((i: number): { start: number; span: number } | null => {
     const ct = contentRef.current;
-    if (!ct) return -1;
+    if (!ct) return null;
     const el = ct.querySelector<HTMLElement>(`[data-anchor="${i}"]`);
-    if (!el) return -1;
+    if (!el) return null;
     const { colW } = metricsRef.current;
-    if (colW <= 0) return -1;
-    return columnIndexAt(el.offsetLeft, colW);
+    if (colW <= 0) return null;
+    // 下一个「起点更靠后」的锚元素即本元素的结束边界（末元素用内容总宽）
+    let nextLeft = -1;
+    let seen = false;
+    for (const other of ct.querySelectorAll<HTMLElement>('[data-anchor]')) {
+      if (other === el) {
+        seen = true;
+        continue;
+      }
+      if (seen && other.offsetLeft > el.offsetLeft) {
+        nextLeft = other.offsetLeft;
+        break;
+      }
+    }
+    const start = columnIndexAt(el.offsetLeft, colW);
+    const end = columnIndexAt(nextLeft >= 0 ? nextLeft : ct.scrollWidth, colW);
+    return { start, span: Math.max(1, end - start) };
   }, []);
 
-  /** 捕获当前窗口起点的锚点（窗口左缘经过的最后一个锚元素） */
+  /** 捕获当前窗口起点的锚点（窗口左缘经过的最后一个锚元素 + 元素内比例位置） */
   const captureAnchor = React.useCallback((): ReadingAnchor | null => {
     const ct = contentRef.current;
     if (!ct) return null;
-    const x = pageRef.current * metricsRef.current.step;
+    const { colW, step } = metricsRef.current;
+    const x = pageRef.current * step;
     let best: { i: number; x: number } | null = null;
+    let nextX = -1;
     for (const el of ct.querySelectorAll<HTMLElement>('[data-anchor]')) {
       const i = Number(el.dataset.anchor);
       if (!Number.isInteger(i) || i < 0) continue;
       if (el.offsetLeft <= x + 4) {
         if (!best || el.offsetLeft >= best.x) best = { i, x: el.offsetLeft };
-      } else break; // 内容按文档顺序排列，offsetLeft 单调
+      } else {
+        nextX = el.offsetLeft; // 内容按文档顺序排列，offsetLeft 单调
+        break;
+      }
     }
     if (!best) {
       const first = ct.querySelector<HTMLElement>('[data-anchor]');
       return first ? { index: Number(first.dataset.anchor) || 0, offset: 0 } : null;
     }
-    return { index: best.i, offset: 0 };
+    if (colW <= 0) return { index: best.i, offset: 0 };
+    const start = columnIndexAt(best.x, colW);
+    const end = columnIndexAt(nextX >= 0 ? nextX : ct.scrollWidth, colW);
+    return {
+      index: best.i,
+      offset: anchorOffsetIn(start, end - start, columnIndexAt(x, colW)),
+    };
   }, []);
 
   /** 量取列宽/总列数并应用位移。布局变化（窗口缩放、字号、内容）都会走到这里 */
@@ -178,8 +234,13 @@ export function useColumnPagination({ columns, deps, initialPercent = 0, initial
     const pending = pendingAnchorRef.current;
     const restoreFrom = pending ?? anchorRef.current;
     if (restoreFrom) {
-      const colIndex = anchorColIndex(restoreFrom.index);
-      if (colIndex >= 0) nextPage = Math.min(pages - 1, Math.floor(colIndex / columns));
+      const pos = anchorColSpan(restoreFrom.index);
+      if (pos) {
+        // 锚元素起始列 + 元素内比例位置（比例见 ReadingAnchor 注释：只记起始列会
+        // 把画面拽回锚元素起点，长章节里就是倒退好几屏）
+        const target = Math.min(cols - 1, anchorTargetCol(pos.start, pos.span, restoreFrom.offset));
+        nextPage = Math.min(pages - 1, Math.floor(target / columns));
+      }
     }
     if (pending) {
       pendingAnchorRef.current = null;
