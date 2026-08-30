@@ -254,6 +254,29 @@ export function ReaderPage() {
     return first.chidx;
   }, [epub, coverUrl]);
 
+  /**
+   * calibre 把每个逻辑章拆成「空标题页（h1 被书 CSS display:none）+ 真正的
+   * 标题页（h1 + 题词/引文）」两节。空标题页：
+   *   - text 长度极小（< 80 字符，通常就是那个被隐藏的章名）
+   *   - imageCount = 0（不是图）
+   *   - 紧跟其后一节的 text 长度 ≥ 本节 2×（真的是有正文的下一节）
+   * 把它们也 display:none，让「真正的标题页」顶到下一节的位置——这样目录跳转到
+   * 该章时，章名大标题就会出现在左页顶部，而不是在右页（用户报告的现象）。
+   * 仍保留 [data-chidx] 选择器不破坏外链 / 批注的 chidx 引用。
+   */
+  const emptyTitleChidxes = React.useMemo(() => {
+    if (!epub) return new Set<number>();
+    const out = new Set<number>();
+    for (const c of epub.chapters) {
+      const myLen = c.text.trim().length;
+      if (myLen === 0 || myLen > 80) continue;
+      if (c.imageCount > 0) continue;
+      const next = epub.chapters[c.chidx + 1];
+      if (next && next.text.trim().length > myLen * 2) out.add(c.chidx);
+    }
+    return out;
+  }, [epub]);
+
   // ---------- 内容加载 ----------
   React.useEffect(() => {
     let cancelled = false;
@@ -415,12 +438,29 @@ export function ReaderPage() {
   /**
    * 目录：EPUB 按章边界（position = chidx）；
    * TXT 多节按节边界，单节回退正则识别章节标题（position = 块索引）
+   *
+   * 章节落点（goToElement）配合 `emptyTitleChidxes` 一起工作：calibre 把每个
+   * 逻辑章切成「空标题页 + 真正标题页」两节。空标题页在渲染时被 display:none
+   * 隐藏——但 display:none 元素的 offsetLeft=0，goToElement('[data-chidx=N]')
+   * 会跳到第 0 列。所以 TOC 的 position 不用 NCX 指向的「空标题页」chidx，
+   * 而要前进到第一个不被隐藏的下一节（空标题页通常是第一节，content 页是
+   * 第二节），这样跳转才落到「章名大标题」的左页。
    */
   const toc: TocItem[] = React.useMemo(() => {
     const items: TocItem[] = [];
     if (epub) {
       for (const c of epub.chapters) {
-        if (c.title) items.push({ title: c.title, position: c.chidx, level: 1 });
+        if (!c.title) continue;
+        let pos = c.chidx;
+        if (emptyTitleChidxes.has(c.chidx)) {
+          for (let j = c.chidx + 1; j < epub.chapters.length; j++) {
+            if (!emptyTitleChidxes.has(j) && epub.chapters[j].html) {
+              pos = j;
+              break;
+            }
+          }
+        }
+        items.push({ title: c.title, position: pos, level: 1 });
       }
       return items;
     }
@@ -438,7 +478,7 @@ export function ReaderPage() {
       });
     }
     return items;
-  }, [epub, sections, flatTexts]);
+  }, [epub, sections, flatTexts, emptyTitleChidxes]);
 
   const chapterForIndex = React.useCallback(
     (pIdx: number): string => {
@@ -1001,10 +1041,13 @@ export function ReaderPage() {
       {epub.chapters
         .filter((c) => c.html)
         .map((c) =>
-          c.chidx === duplicateCoverChidx ? (
-            // 原书自带的纯封面图页与上面抽取出的封面重复（且 calibre 的
-            // preserveAspectRatio="none" 会把它拉变形）：保留占位节点让 data-chidx
-            // 编号与跳转选择器不变，但不渲染内容（display:none 不生成列，不留空白页）
+          c.chidx === duplicateCoverChidx || emptyTitleChidxes.has(c.chidx) ? (
+            // 原书自带的「纯封面图」页/calibre 的「空标题页」（h1 被书 CSS
+            // display:none）都通过 display:none 占位：保留 [data-chidx] 让
+            // 外链/批注的 chidx 引用不失效，又不占列。空标题页特别需要
+            // 隐藏——否则目录跳到下一节时，章名标题被挤到右页（用户感知为
+            // 「跳到的是上一章的最后一页」），隐藏后真正的标题页顶上来成为
+            // 该章的左页起始列
             <section
               key={c.chidx}
               data-chidx={c.chidx}
