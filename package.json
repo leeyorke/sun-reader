@@ -1,6 +1,6 @@
 {
   "name": "sun-reader",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Sun Reader - 桌面端电子书阅读器",
   "main": "src/main/index.js",
   "scripts": {
@@ -96,15 +96,14 @@
       "target": [
         "nsis",
         "portable"
-      ],
-      "nsis": {
-        "oneClick": false,
-        "allowToChangeInstallationDirectory": true,
-        "createDesktopShortcut": true,
-        "createStartMenuShortcut": true,
-        "shortcutName": "Sun Reader",
-        "publisher": "leeyorke"
-      }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sun Reader"
     },
     "mac": {
       "target": [
