@@ -80,6 +80,21 @@
   .reader-page-surface {
     background-color: hsl(var(--reader-page));
   }
+
+  /* 自定义标题栏的拖拽区（主进程 titleBarStyle:'hidden'，Win/macOS）：
+     原生标题栏被隐藏后窗口只能靠这条移动，右上角三键仍由 OS 绘制并优先响应点击。
+     注意 drag 区会吞掉该区域的鼠标事件，所以内容必须让开这块高度
+     （Layout 的 fixed 拖拽条 + 顶部内边距）。 */
+  .titlebar-drag {
+    -webkit-app-region: drag;
+  }
+
+  /* 拖拽区里的可交互元素必须显式退出拖拽，否则鼠标事件会被 drag 区吞掉，
+     按钮画得出来但点不动（实测：elementFromPoint 命中按钮，点击却无响应）。
+     自定义窗口按钮 WindowControls 整块加这个。 */
+  .titlebar-no-drag {
+    -webkit-app-region: no-drag;
+  }
 }
 
 /* 章节标题：加粗居中，且总是从新的一页（新列）开始 */

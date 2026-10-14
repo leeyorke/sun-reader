@@ -69,8 +69,8 @@ src/
 
 ### Main process (src/main/index.js)
 
-Window management, native menu, book import dialog, and **16 IPC handlers**:
-book CRUD (`get-books`, `get-book`, `import-books`, `delete-book`), reading (`update-progress`, `read-book-content`, `get-book-path`, `get-book-cover`), annotations (`add-bookmark`, `remove-bookmark`, `add-note`, `remove-note`), utilities (`show-open-dialog`, `get-config`, `open-external`, `list-system-fonts`).
+Window management, native menu, book import dialog, and **18 IPC handlers**:
+book CRUD (`get-books`, `get-book`, `import-books`, `delete-book`), reading (`update-progress`, `read-book-content`, `get-book-path`, `get-book-cover`), annotations (`add-bookmark`, `remove-bookmark`, `add-note`, `remove-note`), utilities (`show-open-dialog`, `get-config`, `open-external`, `list-system-fonts`, `set-native-theme`, `window-control`).
 
 After an import the main process broadcasts `books-imported` to the renderer; it no longer shows a native success dialog (the renderer toast covers that).
 
@@ -171,3 +171,23 @@ Selecting text in the article shows an action popup (color swatches + 划线 + �
 ### Theme System
 
 Two themes (light/dark) as CSS variable sets under `.light`/`.dark` classes on `<html>` (see `src/renderer/src/index.css`). Cycle button order: light → dark.
+
+### Window caption vs. theme (titleBarStyle:'hidden')
+
+Windows/macOS 用 `titleBarStyle: 'hidden'`（`CUSTOM_CAPTION = process.platform !== 'linux'`）：原生标题栏被隐藏后 caption 区是**透明**的，露出页面背景，于是标题栏颜色天然等于 `index.css` 的 `--background`，与主题完全一致 —— 这是本项目标题栏配色的全部机制，**不要改回 `'default'**（那会让 caption 回到系统色，和主题两张皮）。Linux 保留 `'default'`：隐藏标题栏会把最小化/最大化/关闭一起丢掉，用户就无法关窗/移动窗口。
+
+三件事必须成套维护，少一个就残：
+
+1. **`set-native-theme` IPC**（`theme-provider.tsx` 的主题 effect → 主进程）。caption 上的最小化/最大化/关闭由 **OS 绘制，不吃 CSS 主题**，只设 `nativeTheme.themeSource` 才能让它们跟着反色 —— 深色主题下漏了这一步就是深底深字，完全看不出来（实测：Win10 19044 上 `themeSource='dark'` 会开 DWM immersive dark mode，标题栏和字形一起变深/变亮）。同一个 handler 里 `mainWindow.setBackgroundColor()` 管窗口底色（标题栏透明区透出的就是它）。
+2. **背景色由渲染层传 `getComputedStyle(document.body).backgroundColor`**，主进程不硬编码 hex —— 唯一来源是 `--background`，改主题色不会漂移。主进程把 `theme` + `windowBackgroundColor` 落进 `settings.json`，冷启动建窗时直接读（`DEFAULT_WINDOW_BG` 只是首次运行的兜底色），否则深色主题每次开屏先闪一下浅色标题栏。
+3. **拖拽区与顶部让位**（`hasCustomCaption()` 门控，Linux 全部不渲染）。原生标题栏没了窗口就只能靠 `-webkit-app-region: drag` 移动：`Layout.tsx` 里一条 `fixed top-0 inset-x-0 h-8 z-[1100]` 的 `.titlebar-drag` 条（z 值盖住阅读页的 z-1000、低于各弹窗的 z-1200+）。drag 区会吞掉该区域的鼠标事件，所以内容必须让开这块 32px：`main` 加 `pt-2`、`Sidebar` 品牌块加 `pt-14`（macOS 左上角红绿灯约 44px 高，必须避开）、`DualPageView` 的左右翻页热区从 `top-0` 改成 `top-8`（否则点阅读页角落会拖动窗口而不是翻页）。
+
+#### Windows 上必须自己画窗口按钮（`WindowControls.tsx`）
+
+**Win10 上 `titleBarStyle:'hidden'` 不画原生三键。** 实测窗口样式位：`'default'` → `0x16CF0000`（含 `WS_SYSMENU`，三键正常）；`'hidden'` → `0x14C70000`，**`WS_SYSMENU` 被一起去掉**，没有系统菜单 Windows 就不画最小化/最大化/关闭，连点击都没有。`titleBarOverlay` 只对 Win11 有效，Win10 完全不认。所以 `CUSTOM_CAPTION` 打开时，Windows 必须由渲染层自己画这三个按钮（`components/layout/WindowControls.tsx`，`needsCustomWindowControls()` = `platform === 'win32'` 门控）再走 `window-control` IPC 调 `minimize/unmaximize/maximize/close`。macOS 的红绿灯由系统保留、Linux 用原生边框，两边都不渲染。
+
+画按钮时有三个坑，都是实测踩过的：
+
+- **必须加 `.titlebar-no-drag`**（`-webkit-app-region: no-drag`）。按钮和拖拽条是顶部同一条 32px 带上的兄弟元素，不加的话 drag 区会把鼠标事件吞掉 —— 按钮画得出来、`elementFromPoint` 也命中，但真实点击毫无反应（`DOM.click()` 却正常，因为绕过 OS 输入）。
+- **图标状态要靠主进程推**：`maximize/unmaximize` 事件里 `webContents.send('window-state', {maximized})`（preload 的 `on()` 白名单要加这个通道）。只在前端点击后本地切换是不够的 —— 用户拖拽到屏幕顶端或双击拖拽区也会最大化，图标会停在错误的一档。
+- **`titleBarStyle:'hidden'` 会把 OS 窗口文本清空**（`GetWindowText` 返回 `''`，而 `'default'` 下是 `'Sun Reader'`），任务栏悬停提示和 Alt+Tab 就什么都不显示。用 `page-title-updated` 里 `event.preventDefault()` + `setTitle()` 写回。

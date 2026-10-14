@@ -24,6 +24,7 @@ import {
   StickyNote,
 } from 'lucide-react';
 import { useTheme } from '@/components/theme-provider';
+import { hasCustomCaption } from '@/api/electronApi';
 import { THEMES, THEME_LABELS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { useColumnPagination, type PagerHandle } from '@/hooks/useColumnPagination';
@@ -122,6 +123,9 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
     const pageLabel = firstPage === lastPage ? `${firstPage}` : `${firstPage} - ${lastPage}`;
     const pct = total > 0 ? ((page + 1) / total) * 100 : 0;
 
+    // 顶部 32px 是窗口拖拽区（见 Layout），翻页热区要让开
+    const customCaption = hasCustomCaption();
+
     return (
       <div
         className="fixed inset-0 z-[1000] bg-background flex flex-col"
@@ -152,11 +156,14 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
           </div>
         </main>
 
-        {/* 左右点击热区 */}
+        {/* 左右点击热区（自定义标题栏时避开顶部 32px 拖拽区，否则点角落会拖动窗口） */}
         <button
           aria-label="上一页"
           title="上一页"
-          className="absolute left-0 top-0 bottom-0 w-16 group flex items-center justify-start"
+          className={cn(
+            'absolute left-0 bottom-0 w-16 group flex items-center justify-start',
+            customCaption && 'top-8'
+          )}
           onClick={(e) => {
             e.stopPropagation();
             prev();
@@ -167,7 +174,10 @@ export const DualPageView = React.forwardRef<PagerHandle, DualPageViewProps>(
         <button
           aria-label="下一页"
           title="下一页"
-          className="absolute right-0 top-0 bottom-0 w-16 group flex items-center justify-end"
+          className={cn(
+            'absolute right-0 bottom-0 w-16 group flex items-center justify-end',
+            customCaption && 'top-8'
+          )}
           onClick={(e) => {
             e.stopPropagation();
             next();

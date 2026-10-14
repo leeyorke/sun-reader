@@ -164,6 +164,17 @@ export interface ElectronAPI {
   app: {
     getConfig: () => Promise<{ booksDir: string; coversDir: string; version: string }>;
     openExternal: (url: string) => Promise<void>;
+    /** 运行平台：'win32' | 'darwin' | 'linux'（浏览器里为空串） */
+    platform: string;
+    /** 同步原生标题栏：明暗（最小化/最大化/关闭由 OS 绘制）+ 窗口背景色 */
+    setNativeTheme: (
+      theme: Theme,
+      backgroundColor: string
+    ) => Promise<{ success: boolean; error?: string }>;
+    /** 自定义窗口按钮（Win）：最小化 / 最大化还原 / 关闭；返回操作后是否最大化 */
+    windowControl: (
+      action: 'minimize' | 'toggle-maximize' | 'close'
+    ) => Promise<{ success: boolean; maximized?: boolean; error?: string }>;
   };
   books: {
     getAll: () => Promise<Book[]>;
@@ -219,7 +230,10 @@ export interface ElectronAPI {
     update: (payload: { bookId: string; noteId: string; patch: Partial<Pick<Note, 'content' | 'color'>> }) => Promise<{ success: boolean; note?: Note; error?: string }>;
     remove: (payload: { bookId: string; noteId: string }) => Promise<{ success: boolean; error?: string }>;
   };
-  on: (channel: 'books-imported', callback: (books: Book[]) => void) => void;
+  on: (
+    channel: 'books-imported' | 'window-state',
+    callback: ((books: Book[]) => void) | ((state: { maximized: boolean }) => void)
+  ) => void;
   off: (channel: string, callback: (...args: any[]) => void) => void;
 }
 

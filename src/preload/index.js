@@ -10,7 +10,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 应用信息
   app: {
     getConfig: () => ipcRenderer.invoke('get-config'),
-    openExternal: (url) => ipcRenderer.invoke('open-external', url)
+    openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    // 运行平台（'win32' | 'darwin' | 'linux'）。渲染层据此决定标题栏方案：
+    // Linux 保留原生边框，Win 需要自己画窗口按钮，macOS 保留系统红绿灯。
+    // 与主进程 CUSTOM_CAPTION 的判断同源，改动需同步。
+    platform: process.platform,
+    // 同步原生标题栏：明暗（OS 绘制的三键）+ 窗口背景色
+    setNativeTheme: (theme, backgroundColor) =>
+      ipcRenderer.invoke('set-native-theme', { theme, backgroundColor }),
+    // 自定义窗口按钮（Win 专用）：最小化 / 最大化还原 / 关闭
+    windowControl: (action) => ipcRenderer.invoke('window-control', { action })
   },
 
   // 书籍管理
@@ -70,7 +79,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 事件监听
   on: (channel, callback) => {
     // 只允许特定的通道
-    const validChannels = ['books-imported'];
+    const validChannels = ['books-imported', 'window-state'];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));
     }

@@ -2,7 +2,7 @@
  * Sun Reader - Electron API 封装
  */
 
-import type { Book, ElectronAPI, OpenDialogOptions } from '@/lib/types';
+import type { Book, ElectronAPI, OpenDialogOptions, Theme } from '@/lib/types';
 
 // 直接访问 window.electronAPI
 export const electronApi: ElectronAPI = window.electronAPI;
@@ -29,7 +29,32 @@ export const booksApi = {
 export const appApi = {
   getConfig: () => electronApi.app.getConfig(),
   openExternal: (url: string) => electronApi.app.openExternal(url),
+  setNativeTheme: (theme: Theme, backgroundColor: string) =>
+    electronApi.app.setNativeTheme(theme, backgroundColor),
+  windowControl: (action: 'minimize' | 'toggle-maximize' | 'close') =>
+    electronApi.app.windowControl(action),
 };
+
+/** 运行平台（浏览器里为空串） */
+export const appPlatform = (): string =>
+  typeof window !== 'undefined' ? window.electronAPI?.app?.platform ?? '' : '';
+
+/**
+ * 是否为自定义标题栏（主进程 titleBarStyle:'hidden'）：Windows/macOS 隐藏原生标题栏，
+ * caption 区透明、露出页面背景，需要渲染层自己画一条顶部拖拽区；Linux 保留原生边框。
+ * 浏览器里（无 preload）恒为 false。
+ */
+export const hasCustomCaption = (): boolean => {
+  const p = appPlatform();
+  return p !== '' && p !== 'linux';
+};
+
+/**
+ * 是否需要自己画窗口按钮（最小化/最大化/关闭）：只有 Windows。
+ * titleBarStyle:'hidden' 会连 WS_SYSMENU 一起去掉，原生三键不会画；macOS 的红绿灯
+ * 由系统保留，Linux 用原生边框。
+ */
+export const needsCustomWindowControls = (): boolean => appPlatform() === 'win32';
 
 // 对话框 API
 export const dialogApi = {

@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Settings, Library } from 'lucide-react';
+import { hasCustomCaption } from '@/api/electronApi';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
@@ -21,10 +22,14 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
   );
 
 export function Sidebar() {
+  // 自定义标题栏时顶部 32px 是拖拽区，品牌块往下让：Windows 留出呼吸空间，
+  // macOS 则必须避开左上角的红绿灯（约 44px 高）
+  const customCaption = hasCustomCaption();
+
   return (
     <aside className="w-64 h-full bg-card border-r border-border flex flex-col shrink-0">
       {/* Brand */}
-      <div className="p-6 flex items-center gap-3">
+      <div className={cn('p-6 flex items-center gap-3', customCaption && 'pt-14')}>
         <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
           <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
             <circle cx="16" cy="16" r="6" fill="white" />

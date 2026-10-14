@@ -3,7 +3,7 @@
  * 负责窗口管理、文件导入、书籍解析等功能
  */
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const os = require('os');
@@ -60,6 +60,20 @@ const APP_CONFIG = {
 
 // 保持全局窗口引用
 let mainWindow = null;
+/** set-native-theme 上一次应用的值，避免重复写 settings.json */
+let appliedNativeTheme = null;
+
+/**
+ * 标题栏方案：Windows/macOS 隐藏原生标题栏（titleBarStyle:'hidden'），caption 区
+ * 变透明并露出页面背景 —— 颜色就是 index.css 的 --background，与主题完全一致；
+ * 最小化/最大化/关闭仍由 OS 画在右上角（明暗由 nativeTheme 决定，见 set-native-theme）。
+ * Linux 保留原生边框：隐藏标题栏会把窗口按钮一起丢掉，用户就无法关窗/移动窗口。
+ * 渲染层据此渲染拖拽区并预留顶部空间，见 api/electronApi.ts 的 hasCustomCaption()
+ * （那边是同一行判断，改动需同步）。
+ */
+const CUSTOM_CAPTION = process.platform !== 'linux';
+/** 兜底窗口底色：:root 的 --background (hsl(40 20% 95%))，渲染层上报后即被覆盖 */
+const DEFAULT_WINDOW_BG = '#f5f3f0';
 let libraryData = {
   books: [],
   collections: [],
@@ -102,6 +116,12 @@ function createWindow() {
   // 加载设置
   const settings = loadSettings();
 
+  // 原生标题栏明暗跟随上一次会话的主题（渲染层挂载后会再同步一次）。
+  // 必须在建窗之前设置，否则第一帧 caption 还是系统色。
+  if (settings.theme === 'light' || settings.theme === 'dark') {
+    nativeTheme.themeSource = settings.theme;
+  }
+
   mainWindow = new BrowserWindow({
     width: settings.windowSize?.width || 1400,
     height: settings.windowSize?.height || 900,
@@ -115,7 +135,10 @@ function createWindow() {
       preload: path.join(__dirname, '../preload', 'index.js'),
       webSecurity: true
     },
-    titleBarStyle: 'default',
+    titleBarStyle: CUSTOM_CAPTION ? 'hidden' : 'default',
+    // 建窗到首帧之间的窗口底色，也是标题栏透明区的兜底色；渲染层上报真实
+    // --background 后由 set-native-theme 覆盖（值持久化在 settings.json）
+    backgroundColor: settings.windowBackgroundColor || DEFAULT_WINDOW_BG,
     show: false // 先不显示，等加载完成再显示
   });
 
@@ -128,6 +151,14 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../../dist', 'index.html'));
   }
 
+  // titleBarStyle:'hidden' 会把 OS 窗口文本清空（实测 GetWindowText 返回 ''，
+  // 而 'default' 下是 'Sun Reader'），任务栏悬停提示和 Alt+Tab 就什么都不显示。
+  // 页面标题本身是对的，这里拦掉 Electron 的自动同步、自己写回去。
+  mainWindow.webContents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    mainWindow.setTitle(APP_CONFIG.name);
+  });
+
   // 窗口准备好后显示
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -139,6 +170,16 @@ function createWindow() {
       mainWindow.setPosition(settings.windowPosition.x, settings.windowPosition.y);
     }
   });
+
+  // 最大化状态变化时推给渲染层：窗口按钮图标要在 最大化/还原 之间切换
+  // （用户也可以拖拽到屏幕顶端或双击拖拽区来最大化，不走 window-control）
+  const pushWindowState = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window-state', { maximized: mainWindow.isMaximized() });
+    }
+  };
+  mainWindow.on('maximize', pushWindowState);
+  mainWindow.on('unmaximize', pushWindowState);
 
   // 窗口关闭时保存位置和大小
   mainWindow.on('close', () => {
@@ -467,6 +508,70 @@ ipcMain.handle('get-config', () => {
     coversDir: APP_CONFIG.coversDir,
     version: APP_CONFIG.version
   };
+});
+
+// 同步原生标题栏（渲染层主题切换时调用，见 theme-provider.tsx）。
+// 两件事只有主进程能做：
+//   1. nativeTheme.themeSource —— 标题栏上的最小化/最大化/关闭由 OS 绘制，不吃 CSS
+//      主题；深色主题下不切就是深底深字，完全看不出来。
+//   2. setBackgroundColor —— 让窗口底色与主题一致（标题栏是透明的，透出的就是它）。
+// 背景色由渲染层传 body 的计算值过来，唯一来源是 index.css 的 --background，不会漂移。
+ipcMain.handle('set-native-theme', (_event, payload) => {
+  const theme = payload?.theme;
+  const backgroundColor = payload?.backgroundColor;
+  if (theme !== 'light' && theme !== 'dark') {
+    return { success: false, error: '非法主题' };
+  }
+  if (typeof backgroundColor !== 'string' || !/^(#[0-9a-f]{3,8}|rgba?\([^)]+\))$/i.test(backgroundColor)) {
+    return { success: false, error: '非法背景色' };
+  }
+
+  try {
+    nativeTheme.themeSource = theme;
+    if (mainWindow) mainWindow.setBackgroundColor(backgroundColor);
+
+    // 持久化：下次冷启动建窗时直接用，避免深色主题先闪一下浅色标题栏
+    const key = `${theme}|${backgroundColor}`;
+    if (key !== appliedNativeTheme) {
+      appliedNativeTheme = key;
+      const settings = loadSettings();
+      settings.theme = theme;
+      settings.windowBackgroundColor = backgroundColor;
+      saveSettings(settings);
+    }
+    return { success: true };
+  } catch (e) {
+    console.error('设置原生标题栏主题失败:', e);
+    return { success: false, error: String(e) };
+  }
+});
+
+// 自定义窗口按钮（最小化 / 最大化还原 / 关闭）。
+// Windows 上 titleBarStyle:'hidden' 会连 WS_SYSMENU 一起去掉，原生三键根本不会画
+// （实测 style=0x14C70000，无 WS_SYSMENU；titleBarOverlay 只对 Win11 有效），
+// 所以 Win10 必须由渲染层自己画按钮再调这里，见 components/layout/WindowControls.tsx。
+// macOS 红绿灯由系统保留、Linux 用原生边框，都不走这个 handler。
+ipcMain.handle('window-control', (_event, payload) => {
+  const action = payload?.action;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { success: false, error: '窗口不存在' };
+  }
+  try {
+    if (action === 'minimize') {
+      mainWindow.minimize();
+    } else if (action === 'toggle-maximize') {
+      if (mainWindow.isMaximized()) mainWindow.unmaximize();
+      else mainWindow.maximize();
+    } else if (action === 'close') {
+      mainWindow.close();
+    } else {
+      return { success: false, error: '未知操作' };
+    }
+    return { success: true, maximized: mainWindow.isMaximized() };
+  } catch (e) {
+    console.error('窗口控制失败:', e);
+    return { success: false, error: String(e) };
+  }
 });
 
 // 获取书籍封面（返回 data URL；无缓存时对 EPUB 惰性抽取并缓存）

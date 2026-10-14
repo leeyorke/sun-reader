@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-import type { Theme } from '@/lib/types';
+import type { ElectronAPI, Theme } from '@/lib/types';
 
 type ThemeProviderProps = {
   children: React.ReactNode;
@@ -37,6 +37,13 @@ export function ThemeProvider({
 
     root.classList.remove('light', 'dark');
     root.classList.add(theme);
+
+    // 同步原生标题栏：最小化/最大化/关闭由 OS 绘制，不吃 CSS 主题，深色主题下
+    // 必须让主进程切 nativeTheme，否则是深底深字。背景色直接取 body 的计算值，
+    // 唯一来源就是 index.css 的 --background，不在这里重复一份硬编码。
+    const api = window.electronAPI as ElectronAPI | undefined;
+    api?.app?.setNativeTheme(theme, window.getComputedStyle(document.body).backgroundColor)
+      .catch(() => {});
   }, [theme]);
 
   const value = {
